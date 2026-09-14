@@ -16,6 +16,11 @@ Nagi 排版内部的精确坐标 —— 内容单元 + 节点 + canonical primar
 服务于文字选择、字形命中、批注精确区间、分页边界。
 _Avoid_: offset, 光标位置, DocumentPosition
 
+**NodeID**:
+Native Position 里的元素身份 —— 一个**不透明**的字符串，按字符串自身的相等语义比较，不套用 href 的归一化规则。
+它回答「哪一个元素」，**不表达文档序**；怎么生成一个稳定的 NodeID 属于 ingest / identity scheme。
+_Avoid_: 元素下标, DOM path, 解析顺序, 指纹
+
 **Document Order**:
 两个 Native Position 在文档中的先后 —— 单元在 Document Manifest 的 reading order 中的序号，再是单元内 canonical primary text 的绝对 UTF-16 偏移。
 它是**文档的函数**，随 reading order 重排而变，不是位置自带的常量，也不持久化。
