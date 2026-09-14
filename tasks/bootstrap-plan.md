@@ -20,7 +20,7 @@
 |---|---|---|
 | **R0** | **契约**：`docs/adr/0002-native-position-and-document-order.md` 与 `CONTEXT.md` 的 `NodeID` 词条。**纯文档，不写代码。** | **已完成（Codex 复审通过）** |
 | **R1** | 按 R0 的契约实现 `NodeID` / `NativePosition` / `DocumentOrderComparison` / `compareInDocumentOrder(_:_:)` 与测试。 | **已完成（Codex 复审通过；13 条测试）** |
-| **R2** | **本 PR 的远端门禁**：推送分支、开 Draft PR，让 macOS CI 做**首次真实编译与测试**（基线 9 + 新增 13 = **预期 22 tests / 0 failures**），通过后停在**合并前终审**。不增加新功能。 | 进行中 |
+| **R2** | **本 PR 的远端门禁**：推送分支、开 Draft PR，让 macOS CI 做**首次真实编译与测试**（基线 9 + 新增 13 = **预期 22 tests / 0 failures**），通过后停在**合并前终审**。不增加新功能。 | **已完成（CI 22 tests / 0 failures；Codex 终审通过）** |
 
 **R0 的定案**（全文见 ADR-0002）：`NodeID` 在 Core 是**不透明字符串身份**，**直接采用 Swift `String` `==`、不附加 href 式归一化**，怎么生成归 ingest / identity scheme；`NativePosition` 是 `unitID + nodeID + utf16Offset` 的不可变值，**不带 `documentOrder`、不给 `Comparable`、initializer 不校验 offset**；次序由一个 `internal` 的 `DocumentOrderKey(unitIndex, utf16Offset)` 承担（非 `Codable`、不持久化），公开面只暴露 `DocumentOrderComparison` 与 `compareInDocumentOrder(_:_:)`。
 
