@@ -1,0 +1,8 @@
+# Every text file is stored with LF, on every platform.
+#
+# The engine builds and is tested on macOS. A checkout that carried CRLF into the
+# sources would make the file the compiler reads differ, byte for byte, from the
+# file the repository stores — and nothing downstream can tell that it happened.
+# Saying it here makes it a property of the repository rather than of whoever
+# happened to be on Windows when a file was written.
+* text=auto eol=lf

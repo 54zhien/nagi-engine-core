@@ -1,0 +1,11 @@
+# SwiftPM build products
+.build/
+.swiftpm/
+
+# macOS
+.DS_Store
+
+# Xcode
+DerivedData/
+xcuserdata/
+*.xcuserstate

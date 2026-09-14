@@ -1,0 +1,36 @@
+# One job, one question: does this build, and do the unit tests actually run?
+#
+# There is no second gate. The sibling evidence repo has one because it runs
+# spikes three times in three processes and compares fingerprints; this repo has
+# nothing to measure yet — the first models are pure values — and it must not
+# grow a research gate it has no research for.
+#
+# Nothing is cached, and `actions/checkout` is the only action used: a green run
+# should mean the sources build on a clean macOS toolchain, not that a cache
+# happened to be warm.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Toolchain
+        run: swift --version
+
+      - name: Build
+        run: swift build
+
+      - name: Test
+        run: swift test
