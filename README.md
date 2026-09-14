@@ -20,11 +20,18 @@ public struct DocumentManifest: Sendable {
     public let readingOrder: [DocumentUnit]
     public func readingOrderIndex(of unitID: DocumentUnitID) -> Int?   // 零基、O(1)
 }
+
+public struct PageMap: Sendable {
+    public init(manifest: DocumentManifest, pageBreaks: [DocumentUnitID: [Int]]) throws
+    public func page(containingUnit unitID: DocumentUnitID, at utf16Offset: Int) -> Int?
+}
 ```
 
-一个 manifest、它的单元 ID 与单元描述，外加一条构造期不变量：**同一 manifest 内 ID 必须唯一，重复立即抛 `DocumentManifestError.duplicateUnitID`**。这就是全部。
+一个 manifest、它的单元 ID 与单元描述，外加一条构造期不变量：**同一 manifest 内 ID 必须唯一，重复立即抛 `DocumentManifestError.duplicateUnitID`**。
 
-**还没有**：`NodeID`、`NativePosition`、`DocumentOrderKey`、`PageMap`、`PositionResolver`、`DocumentStore`、任何解析器、任何排版后端、任何 UI。`DocumentManifest` 本身也**还不是** `Codable` —— 序列化形状要等真正需要持久化的那个消费者来定，不是现在猜。
+以及一个**纯值**的页索引：给它「每个单元在哪里分页」，它回答「这个偏移落在第几页」。**没有页信息的单元，它回答 `nil`** —— 不编造一个页号来显得有用。它不测量文字、不碰排版后端；页边界由做排版的那一层给。见 **ADR-0002**。
+
+**还没有**：`NodeID`、`NativePosition`、`PositionResolver`、`DocumentStore`、`PageScene`、`LayoutSignature`、任何解析器、任何排版后端、任何 UI。`DocumentManifest` 也**还不是** `Codable` —— 序列化形状要等真正需要持久化的那个消费者来定，不是现在猜。`PageMap` 回答的是**单元内**页序号；「第 47 页」那种全书页号要等完整性模型。
 
 ## 构建与测试
 
