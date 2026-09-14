@@ -19,12 +19,21 @@
 public struct DocumentManifest: Sendable {
     public let readingOrder: [DocumentUnit]
     public func readingOrderIndex(of unitID: DocumentUnitID) -> Int?   // 零基、O(1)
+    public func compareInDocumentOrder(_ lhs: NativePosition, _ rhs: NativePosition) -> DocumentOrderComparison?
+}
+
+public struct NativePosition: Codable, Hashable, Sendable {
+    public let unitID: DocumentUnitID
+    public let nodeID: NodeID
+    public let utf16Offset: Int
 }
 ```
 
-一个 manifest、它的单元 ID 与单元描述，外加一条构造期不变量：**同一 manifest 内 ID 必须唯一，重复立即抛 `DocumentManifestError.duplicateUnitID`**。这就是全部。
+一个 manifest、它的单元 ID 与单元描述，外加一条构造期不变量：**同一 manifest 内 ID 必须唯一，重复立即抛 `DocumentManifestError.duplicateUnitID`**。
 
-**还没有**：`NodeID`、`NativePosition`、`DocumentOrderKey`、`PageMap`、`PositionResolver`、`DocumentStore`、任何解析器、任何排版后端、任何 UI。`DocumentManifest` 本身也**还不是** `Codable` —— 序列化形状要等真正需要持久化的那个消费者来定，不是现在猜。
+以及「两个位置谁在前」这个问题的答案：`compareInDocumentOrder` 给出 `before / sameCoordinate / after` **三值**。**同单元、同偏移就是同一个文本坐标** —— `NodeID` 不参与破平局；**任一位置的单元不在 manifest 里就返回 `nil`** —— 没有键就没有次序，不是「排到最后」，也不是错误。次序是**文档的函数**：manifest 重排，同两个位置的先后随之改变。见 **ADR-0002**。
+
+**还没有**：`PageMap`、`PositionResolver`、`DocumentStore`、`PageScene`、`LayoutSignature`、任何解析器、任何排版后端、任何 UI。`PageMap` 是**后置**的 —— 它要等 Native Position、页范围与单元长度、Layout Signature / generation、完整性状态，以及部分分页下的 Page identity 都定案。`DocumentManifest` 本身也**还不是** `Codable` —— 序列化形状要等真正需要持久化的那个消费者来定，不是现在猜。
 
 ## 构建与测试
 
