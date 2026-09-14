@@ -113,7 +113,13 @@ final class DocumentManifestTests: XCTestCase {
         let original = id("OEBPS/chapter.xhtml#frag")
 
         let data = try JSONEncoder().encode(original)
-        XCTAssertEqual(String(decoding: data, as: UTF8.self), "\"OEBPS/chapter.xhtml#frag\"")
+
+        // Decoding the top level as a `String` is what proves the shape: the
+        // synthesised `{ "rawValue": … }` form would refuse this and need a keyed
+        // container instead. The bytes are deliberately not asserted — whether an
+        // encoder escapes a slash is the encoder's business, not this type's.
+        let wireValue = try JSONDecoder().decode(String.self, from: data)
+        XCTAssertEqual(wireValue, original.rawValue)
 
         let decoded = try JSONDecoder().decode(DocumentUnitID.self, from: data)
         XCTAssertEqual(decoded, original)
