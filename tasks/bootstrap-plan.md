@@ -45,9 +45,23 @@
 
 旧分支的 `docs/adr/0002-pagemap-boundary.md` 从未进入 `main`，**不是 canonical ADR**；未来若重启 PageMap，必须基于当时的 `main` 重新定案，**不得恢复该 accepted 文件**。
 
-## E2 —— 再扩展
+## E2 —— 单元级 Primary Text 数轴（R0 / R1）
 
-E1 的 R1 之后才谈。**顺序不是日程，是依赖**：每个值模型的形状应由它的消费者倒推，而不是先摆好再去找人用。
+**审计结论（Codex，2026-09-14）：下一步不做 `ContentFragment`、完整 `PositionResolver` 或 `PageMap`，先落「单元级 Primary Text 数轴」。** 四条理由：
+
+- 旧仓的 **canonical-text 实现切片**（`Sources/SpikeAKit/CanonicalText.swift`）把**可靠的 UTF-16 数轴、元素身份与范围映射、空白折叠、XHTML 解析**四件事捆在一起 —— **不能整体搬入 Core**：后三件都是 **ingest** 的职责。（**`NodeID` 不在其中**，它由 identity scheme 构造。）
+- `ContentFragment` 究竟覆盖**整个 unit** 还是**局部 shard**、是否需要 unit-relative base offset，**尚未定案**。形状未定就落类型，是把猜测写成契约。
+- 完整 `PositionResolver` 还缺**吸附方向**与 caret / shaping / line-break 策略。**现在公开半成品会重犯 PR #2 的错误** —— 那个 PR 的 CI 是绿的，契约不成立。
+- `PageMap` 仍缺页范围与单元长度、Layout Signature / generation、完整性状态、部分分页下的 Page identity。
+
+| 段 | 内容 | 状态 |
+|---|---|---|
+| **R0** | **契约**：`docs/adr/0003-primary-text-segment.md` 与本节。**纯文档，不写代码。** | **已完成（Codex 复审通过）** |
+| **R1** | 实现 `PrimaryTextSegment`（`isStorageBoundary(at:)` / `text(inUTF16:)`）与测试。 | 未开始 |
+
+**R0 的定案**（全文见 ADR-0003）：`PrimaryTextSegment` 是**一个完整 `DocumentUnit` 的 unit-local primary text**，不是 publication-global 文本、也不是 `ContentShard`；构造器**不解析、不折叠、不归一化**，canonical 化由 ingest 负责；**不带 `Codable` / `Hashable` / `NodeID` / 元素树 / 样式 / ruby annotation / 几何**；合法 storage boundary 是 `0...utf16Count` 中不切开 surrogate pair 的位置（负数、越界、`Int.max` 一律 `false`）；`text(inUTF16:)` 的参数是**半开区间**，要求 **`lowerBound <= upperBound`** 且**两端均为合法边界**，成功时返回该区间的精确文本，**合法的空区间返回 `""`**，**任一条件不成立返回 `nil`** —— **顺序要 API 自己拒绝**（Swift 的 `Range.init(uncheckedBounds:)` 不检查顺序），且**不得把半个 surrogate 静默解码成 U+FFFD**。
+
+**顺序不是日程，是依赖**：每个值模型的形状应由它的消费者倒推，而不是先摆好再去找人用。
 
 ## 一条约束
 
