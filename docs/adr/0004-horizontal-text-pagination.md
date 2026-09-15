@@ -185,6 +185,71 @@ CoreText 给的仍叫 **candidate**，而 **E3 在结构校验通过之后原样
 
 **不得恢复已关闭 PR #2 的 `PageMap` 代码，也不得恢复那份 ADR。**
 
+## 实现与实测结果（2026-09-15）
+
+三段各自独立提交，契约在前：
+
+| 段 | commit | 内容 |
+|---|---|---|
+| **R0** | `025b044` | 本 ADR + `CONTEXT.md` 的两个词 + 计划里的 E3 段（纯文档） |
+| **R1** | `6e0a2ca` | Core 侧类型 / 协议 / paginator + fake backend 的证伪测试 |
+| **R2** | `2eda1dd` | `NagiEngineCoreText` target 与 CoreText backend + integration tests |
+
+**CI 读数**（均为 macOS runner，`Apple Swift version 6.1.2`）：
+
+- R1：run `34930167308` —— **55 tests / 0 failures**（既有 35 + 新增 20，逐 suite 回读确认新增的 20 条确实执行）
+- R2：run `34930826483` —— **65 tests / 0 failures**（55 + 新增 10，同样逐 suite 回读）
+
+**R2 的 10 条真实 CoreText integration tests 证明了什么**（只写它们实际断言的事）：
+
+- `NagiEngineCoreText` 在 macOS 上**链接并编译**，CoreText backend 能被 `TextPaginator` 正常消费；
+- session 从被请求的 offset 起给候选，range 正长度、不越界、两端都是 storage boundary，`naturalBlockExtent` finite 且 `> 0`；
+- 换行语料**产生多于一行**，consumed ranges 顺序**无缝**覆盖整个 segment；
+- 含非 BMP 标量的语料经真实 backend + paginator 分页后，**每个 page endpoint 都是 storage boundary**，页范围完整覆盖；
+- **更窄的 inline extent 给出严格更多的行数，以及严格更多的页数**（不是「不少于」）；
+- 同一输入**重复调用结果一致**；
+- 真实 end-to-end **至少跨两页**；
+- 直接驱动 session 时，非法 inline extent 与越界 offset 命中**有名字的错误**，`offset == utf16Count` 返回 `nil`；
+- `languageTag` 为 `nil` 与 `"ja"` 两条构造路径都能覆盖整个 segment。
+
+**刻意不记录的东西**：这些测试**不钉**精确断点位置、绝对浮点或具体页数，所以本 ADR 也不写 —— 系统字体会被更新，而钉它的办法（捆绑字体）属于后续的 golden / determinism gate，不是这里。
+
+**CoreText 侧实际的公开面**：
+
+```swift
+public enum CoreTextLineBreakError: Error, Equatable, Sendable {
+    case invalidInlineExtent
+    case utf16OffsetOutOfBounds(Int)
+    case suggestedLengthOutOfBounds(atUTF16Offset: Int, length: Int)
+}
+
+public struct CoreTextLineBreakBackend: LineBreakBackend {
+    public init(font: CTFont, languageTag: String? = nil)
+    public func makeSession(for segment: PrimaryTextSegment) throws -> CoreTextLineBreakSession
+}
+
+public final class CoreTextLineBreakSession: LineBreakSession {
+    init(segment: PrimaryTextSegment, font: CTFont, languageTag: String?)
+
+    public func suggestLine(
+        fromUTF16Offset offset: Int,
+        inlineExtent: Double
+    ) throws -> LineMeasurement?
+}
+```
+
+- **session 的 `init` 不是 `public`**：session 由 backend 与它绑定的那个 segment 配对产出，模块外拿不到构造入口。
+- **`CoreTextLineBreakError` 有两个不同的受众**，不是只服务一方：
+  - `invalidInlineExtent` 与 `utf16OffsetOutOfBounds` 主要保护**直接驱动 session 的调用方** —— paginator 的正常路径会在调用前就拦下非法 constraints 与越界 offset，所以这两条在它那里不会发生；
+  - **`suggestedLengthOutOfBounds` 也保护 paginator 的正常路径**：CoreText 若建议出超过该 segment 剩余长度的量，这一条把它挡住，而不是让一个越界的 range 流进 Core 的校验里。
+  - 三个 case 都**不携带 `Double`**，理由与 `TextPaginationError` 相同。
+- **backend 与 session 都不声明 `Sendable`**，也没有 `@unchecked`：它们持有 `CTFont` 与 `CTTypesetter`，没有文档化的线程安全依据可援引 —— 没有证据就不断言。
+
+**两处实现期的修正**（记录事实，不作为架构结论）：
+
+- **R2** 的 integration test 里有一处 newline 循环的上限写成了**不会让测试退出**的断言（`XCTAssertLessThan`）；已改成会 `return` 的 `guard`。测试里的「防挂住」必须真的能终止。
+- R2 的源码注释里出现过**旧验证仓的裸 ADR 编号**；已改为引用**本仓 ADR-0004**（它已固定吸收那份边界）。
+
 ## Consequences
 
 - **`UnitPageRanges` 只在生成它的那次调用里有意义。** 它不 `Codable`、不 `Hashable`、不持久化；它**不携带 `LayoutSignature` 或 generation**，因此**两次碰巧相同的 ranges 不是同一次 layout identity** —— 那只是两个值相等。未来的 `PageMap` 必须连同 signature / generation / completeness **建立自己的身份**，不能拿这里的相等当依据。
