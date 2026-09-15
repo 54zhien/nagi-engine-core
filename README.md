@@ -27,13 +27,23 @@ public struct NativePosition: Codable, Hashable, Sendable {
     public let nodeID: NodeID
     public let utf16Offset: Int
 }
+
+public struct PrimaryTextSegment: Sendable {
+    public let unitID: DocumentUnitID
+    public let string: String
+    public var utf16Count: Int
+    public func isStorageBoundary(at utf16Offset: Int) -> Bool
+    public func text(inUTF16 range: Range<Int>) -> String?
+}
 ```
 
 一个 manifest、它的单元 ID 与单元描述，外加一条构造期不变量：**同一 manifest 内 ID 必须唯一，重复立即抛 `DocumentManifestError.duplicateUnitID`**。
 
 以及「两个位置谁在前」这个问题的答案：`compareInDocumentOrder` 给出 `before / sameCoordinate / after` **三值**。**同单元、同偏移就是同一个文本坐标** —— `NodeID` 不参与破平局；**任一位置的单元不在 manifest 里就返回 `nil`** —— 没有键就没有次序，不是「排到最后」，也不是错误。次序是**文档的函数**：manifest 重排，同两个位置的先后随之改变。见 **ADR-0002**。
 
-**还没有**：`PageMap`、`PositionResolver`、`DocumentStore`、`PageScene`、`LayoutSignature`、任何解析器、任何排版后端、任何 UI。`PageMap` 是**后置**的 —— 它要等 Native Position、页范围与单元长度、Layout Signature / generation、完整性状态，以及部分分页下的 Page identity 都定案。`DocumentManifest` 本身也**还不是** `Codable` —— 序列化形状要等真正需要持久化的那个消费者来定，不是现在猜。
+还有一个单元的**主文本数轴**：`PrimaryTextSegment` 是**一个完整 unit 的 unit-local primary text** —— 不是全书文本，也不是 `ContentShard`。它只给两个事实：某个偏移是不是**合法 storage boundary**（`0...utf16Count` 里不切开 surrogate pair 的位置），以及某个 UTF-16 **半开区间**对应的**精确文本**（两端都得是合法边界，否则 `nil` —— 不会把半个 surrogate 解成 U+FFFD）。构造器**不解析、不折叠、不归一化**，canonical 化是 ingest 的事；它**不是** `PositionResolver`，**不决定吸附方向**，也**不是 caret policy** —— combining mark 内部仍是合法边界，因为它只认 surrogate pair。见 **ADR-0003**。
+
+**还没有**：`PageMap`、`PositionResolver`、`DocumentStore`、`PageScene`、`LayoutSignature`、任何解析器、任何排版后端、任何 UI。**`PageMap` 仍是后置的** —— Native Position 与 unit-local 长度这两项已经具备，它仍要等**页范围**、**Layout Signature / generation**、**完整性状态**、**部分分页下的 Page identity**，以及**把 segment 交付给消费者的正式路径**。`DocumentManifest` 本身也**还不是** `Codable` —— 序列化形状要等真正需要持久化的那个消费者来定，不是现在猜。
 
 ## 构建与测试
 

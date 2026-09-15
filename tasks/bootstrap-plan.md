@@ -45,7 +45,7 @@
 
 旧分支的 `docs/adr/0002-pagemap-boundary.md` 从未进入 `main`，**不是 canonical ADR**；未来若重启 PageMap，必须基于当时的 `main` 重新定案，**不得恢复该 accepted 文件**。
 
-## E2 —— 单元级 Primary Text 数轴（R0 / R1）
+## E2 —— 单元级 Primary Text 数轴（R0 / R1 / R2）
 
 **审计结论（Codex，2026-09-14）：下一步不做 `ContentFragment`、完整 `PositionResolver` 或 `PageMap`，先落「单元级 Primary Text 数轴」。** 四条理由：
 
@@ -57,7 +57,8 @@
 | 段 | 内容 | 状态 |
 |---|---|---|
 | **R0** | **契约**：`docs/adr/0003-primary-text-segment.md` 与本节。**纯文档，不写代码。** | **已完成（Codex 复审通过）** |
-| **R1** | 实现 `PrimaryTextSegment`（`isStorageBoundary(at:)` / `text(inUTF16:)`）与测试。 | 未开始 |
+| **R1** | 实现 `PrimaryTextSegment`（`isStorageBoundary(at:)` / `text(inUTF16:)`）与 **13 条**测试。 | **已完成（Codex 静态复审通过；CI 35 / 0）** |
+| **R2** | **最终远端门禁**：本 PR 的最终 head 在 macOS CI 上 **35 tests / 0 failures**，并记录两次**由 CI 发现、各自单独提交**的纠正。 | **已完成（最终 head CI 35 / 0）** |
 
 **R0 的定案**（全文见 ADR-0003）：`PrimaryTextSegment` 是**一个完整 `DocumentUnit` 的 unit-local primary text**，不是 publication-global 文本、也不是 `ContentShard`；构造器**不解析、不折叠、不归一化**，canonical 化由 ingest 负责；**不带 `Codable` / `Hashable` / `NodeID` / 元素树 / 样式 / ruby annotation / 几何**；合法 storage boundary 是 `0...utf16Count` 中不切开 surrogate pair 的位置（负数、越界、`Int.max` 一律 `false`）；`text(inUTF16:)` 的参数是**半开区间**，**两端必须均为合法 storage boundary**、**非负与上界由方法自己检查**（且在任何索引或切片运算之前），成功时返回该区间的精确文本，**合法的空区间返回 `""`**，任一条件不成立返回 `nil`；**有序性不由方法检查** —— `Range<Int>` 的有效值自身满足 `lowerBound <= upperBound`，违反 `Range` 初始化器前置条件的值构造不出来（首次 CI run `34921959000` 里，一条构造逆序 `Range` 的测试在**进入方法之前**就被 `Swift/Range.swift` 打死）；且**不得把半个 surrogate 静默解码成 U+FFFD**。
 
