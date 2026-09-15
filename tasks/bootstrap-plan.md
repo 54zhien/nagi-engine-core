@@ -98,10 +98,12 @@ PrimaryTextSegment + 由 ingest 注入的单一 NodeID
 | 段 | 内容 | 状态 |
 |---|---|---|
 | **R0** | **契约**：`docs/adr/0005-coretext-plain-text-page-scene.md` 与本节。**纯文档，不写代码。** | **已完成（Codex 复审通过）** |
-| **R1** | CoreText 侧：module-internal recording backend、session 的 line artifacts、`CoreTextPaginatedPlainText`、`CoreTextPlainTextPageScene`、`draw`、`nativePosition(at:)` 与测试；开 **Draft PR** 跑 macOS CI 后停。 | 未开始 |
-| **R2** | 文档收口、最终 CI、转 ready、**合并前终审**。 | 未开始 |
+| **R1** | CoreText 侧：module-internal recording backend、session 的 line artifacts、`CoreTextPaginatedPlainText`、`CoreTextPlainTextPageScene`、`draw`、`nativePosition(at:)` 与测试；开 **Draft PR** 跑 macOS CI 后停。 | **已完成（Codex 复审通过）**：三笔历史中的 R1 实现 `10f3bd9` 与 CI 纠正 `5b93c3b`；当前 run **`34964944798`** = **81 tests / 0 failures**（六 suite 10 / 16 / 9 / 13 / 13 / 20） |
+| **R2** | 文档收口、最终 CI、转 ready、**合并前终审**。 | **文档收口已完成（Codex 复审通过）；最终 head CI、转 ready、合并前终审尚未执行** |
 
 **三个确认点**：① R0 文档 diff → ② R1 的 CoreText 侧 diff（CI 绿后）→ ③ R2 合并前终审。
+
+**首次红 run 暴露并纠正的三类事实**（详情见 ADR-0005「实现与实测」，此处不重复）：① `textMatrix` 不被普通 `restoreGState` 恢复，`draw` 曾把翻转泄漏给调用方；② 「`upperBound` 可逆」是**错的假设** —— 属契约问题，§D3 与 §H 第 10 条已按实测改写；③ 跨颜色比较像素 coverage 的等式**过强** —— 文字平滑使覆盖率随颜色变化，颜色只应门禁布局。
 
 ### Core 侧零改动
 

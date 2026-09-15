@@ -289,3 +289,52 @@ public struct CoreTextPlainTextPageScene {
   - 主工程的 `CLAUDE.md` 明文「**不要动用户的 UI** … 不在设置、选项、菜单里加任何东西 —— **包括调试项、状态行、开关**」，且其教训写着「**让用户选渲染引擎这个设计本身就是错的**」；仓内特性开关机制命中 **0**。**因此 E5 的 gate 必须是内部构建 / 能力门，不得是用户设置。**
   - 主工程的 `ReadingPosition` **只有 `locatorJSON: String` 一个字段**，进度持久化整体走 Locator JSON。非 Readium 的排版将来若要共用进度，必须自己产出等价的 locator JSON。
 - 旧仓 `0006:56` 的口径在本 ADR 继续适用：本切片用的是 CoreText **默认候选断行**，**不构成**对完整 UAX #14 或日本語組版规则的兼容性保证。
+
+## 实现与实测（2026-09-15）
+
+三笔各自独立提交，契约在前，纠正单独一笔：
+
+| 笔 | commit | 内容 |
+|---|---|---|
+| **R0** | `a5ecdad` | 本 ADR + 计划里的 E4 段（**纯文档，只两份文件**） |
+| **R1** | `10f3bd9` | `NagiEngineCoreText` 侧实现：module-internal recording backend、session 的 exact line artifacts、`CoreTextPaginatedPlainText`、`CoreTextPlainTextPageScene`、`draw`、`nativePosition(at:)` 与 **16 条**测试（三文件） |
+| **CI 纠正** | `5b93c3b` | 按首次 CI 的三条失败改实现、测试与本 ADR 的对应段落（三文件）。**未 amend、未 rebase、未 force push** —— 三笔历史可追溯 |
+
+### 两次 CI 读数（均为 macOS runner，`Apple Swift version 6.1.2`）
+
+**第一次：run `34963033441`（head `10f3bd9`）—— 这些文件的第一次真实 Swift / macOS 编译。**
+
+- **编译通过**：81 条测试**全部被执行**，**没有任何编译错误**。
+- **81 tests / 3 failures**：三条**都在新增的 16 条里**；**65 条基线全绿，一条未退**。
+- 三条失败各暴露一类事实：
+
+  1. **`textMatrix` 状态泄漏** —— `draw` 返回后，调用方读回的 matrix 含 `d = −1`，以及 `draw` 之后的平移。**普通 `restoreGState` 不恢复 text matrix。**（那次运行**没有**单独读回 `textPosition`，所以它不构成「restore 也不恢复 textPosition」的证据。）
+  2. **「`upperBound` 可逆」这个假设是错的** —— 在由 `upperBound` 推来的 end x 上做位置命中，`CTLineGetStringIndexForPosition` 返回的是**另一个**合法 index：**round-trip 没有闭合**。这是**契约**的问题，不是实现的问题。
+  3. **跨颜色的 coverage 等式过强** —— 同一批字形换一种前景色后，alpha 覆盖像素数不同；文字平滑使覆盖率**与颜色相关**，像素几何不是有效的不变量。
+
+**第二次：run `34964944798`（head `5b93c3b`，attempt 1）→ 绿**
+
+| suite | tests |
+|---|---|
+| `CoreTextLineBreakBackendTests` | 10 |
+| `CoreTextPlainTextPageSceneTests` | 16 |
+| `DocumentManifestTests` | 9 |
+| `NativePositionTests` | 13 |
+| `PrimaryTextSegmentTests` | 13 |
+| `TextPaginationTests` | 20 |
+| **合计** | **81 tests / 0 failures** |
+
+required check `build-and-test`（`app_id` 15368）→ `completed / success`，**绑在 `5b93c3b` 上**。
+
+### 首次红 run 之后的最终裁定
+
+1. **图形状态**：`draw` 进入时捕获 `textMatrix` 与 `textPosition`，退出时**显式恢复**。契约要求的是**入口两项、出口原样**；恢复的代码写法是内部策略，不是契约。
+2. **行尾**：`nativePosition` **返回 CoreText 在该点实际给出的合法 index**，**不对 `x == width` 或 `upperBound` 做任何特判** —— 那等于在本层发明 caret / affinity 策略。§D3 与 §H 第 10 条已按此改写。
+3. **颜色**：颜色**只门禁布局**（`pageRanges` 与各行 top / baseline / ascent / descent / leading / typographicWidth / naturalBlockExtent **全量不变**），外加「**目标颜色确实画出来了**」；**不再比较两次绘制的像素几何**。
+
+### 这一阶段没有动的东西
+
+- **`NagiEngineCore` 与 `Sources/NagiEngineCore/TextPagination.swift`：零改动。** `TextPagination.swift` 在 E4 一字未改，Core 的公开面逐字不变。
+- **主工程零改动**（只做过只读调查）。
+- **E4 没有引入** `PageMap` / `ContentFragment` / `DocumentStore` / 宿主适配 / `LayoutSignature` 持久身份。
+- **PR #6 在写下这段时仍是 Draft、未合并**，也**未转 ready**。
