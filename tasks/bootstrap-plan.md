@@ -75,13 +75,58 @@
 | **R0** | **契约**：`docs/adr/0004-horizontal-text-pagination.md`、`CONTEXT.md` 的两个词、本节。**纯文档，不写代码。** | **已完成（Codex 复审通过）** |
 | **R1** | Core 侧类型 / 协议 / paginator + **fake backend** 的证伪测试。单独提交，推 Draft PR 跑 macOS CI 后停。 | **已完成**（CI run `34930167308` **55 / 0**；Codex 静态复审与远端门禁均通过） |
 | **R2** | `NagiEngineCoreText` target 与真实 backend + CoreText integration tests；**不做渲染**；CI 后停。 | **已完成**（CI run `34930826483` **65 / 0**；Codex 复审通过） |
-| **R3** | **文档收口**：`README.md` + 本 ADR 的实现与实测记录 + 本计划；随后最终 CI、转 ready、**合并前终审**。 | **文档已完成（Codex 复审通过）；最终 head CI / ready / merge 状态以 PR #5 为准** |
+| **R3** | **文档收口**：`README.md` + 本 ADR 的实现与实测记录 + 本计划；随后最终 CI、转 ready、**合并前终审**。 | **已完成**：PR #5 已 **rebase merge** 进 `main`（merge commit `273b440a2811db8207e2d02402d131b66d3c016a`）；main push CI run **`34959398653`** = **65 tests / 0 failures**（CoreTextLineBreakBackend 10 · DocumentManifest 9 · NativePosition 13 · PrimaryTextSegment 13 · TextPagination 20） |
 
 **四个确认点**：① R0 文档 diff → ② R1 的 Core 侧 diff（CI 绿后）→ ③ R2 的 CoreText 侧 diff（CI 绿后）→ ④ R3 合并前终审。
 
-**下一步依赖（E3 合并之后）**：**仍然先不做 `PageMap`。** 下一纵切应当由**能渲染 page scene 或做宿主集成的最小消费者**倒推，而不是由已经写好的类型往前推；具体方案由 **Codex 另行定案** —— **本文件不授权自行开始 E4**。
+**下一步依赖（E3 合并之后）**：**仍然先不做 `PageMap`。** 下一纵切由**能渲染 page scene 或做宿主集成的最小消费者**倒推，而不是由已经写好的类型往前推 —— 方向见下面的 **E4** 段。
 
 **一条禁令**：**不得恢复已关闭 PR #2 的 `PageMap` 代码，也不得恢复那份 ADR。** 它被否决的四条理由仍在上面记着。
+
+## E4 —— 横排单节点纯文本的 Page Scene（R0 / R1 / R2）
+
+**方向**：由**能渲染且可交互的最小消费者**倒推，而不是由已经写好的类型往前推。它**不是 `PageMap`**，也不是泛化 EPUB。
+
+```
+PrimaryTextSegment + 由 ingest 注入的单一 NodeID
+  + TextPaginationConstraints + CoreTextLineBreakBackend
+  → NagiEngineCoreText 内部 module-internal recording backend 包住 backend
+  → 现有 TextPaginator 决定页边界（Core 零改动）
+  → 该 session 的 exact CTLine → CoreTextPaginatedPlainText → CoreTextPlainTextPageScene
+```
+
+| 段 | 内容 | 状态 |
+|---|---|---|
+| **R0** | **契约**：`docs/adr/0005-coretext-plain-text-page-scene.md` 与本节。**纯文档，不写代码。** | **已完成（Codex 复审通过）** |
+| **R1** | CoreText 侧：module-internal recording backend、session 的 line artifacts、`CoreTextPaginatedPlainText`、`CoreTextPlainTextPageScene`、`draw`、`nativePosition(at:)` 与测试；开 **Draft PR** 跑 macOS CI 后停。 | 未开始 |
+| **R2** | 文档收口、最终 CI、转 ready、**合并前终审**。 | 未开始 |
+
+**三个确认点**：① R0 文档 diff → ② R1 的 CoreText 侧 diff（CI 绿后）→ ③ R2 合并前终审。
+
+### Core 侧零改动
+
+**E4 不改 `Sources/NagiEngineCore/TextPagination.swift`，不改 `NagiEngineCore` 的任何公开 API。**
+
+CoreText 侧要拿到「同一次调用的页范围」与「这次调用的行」，靠的是一个**每次调用独占的 module-internal recording backend**：它包住 `CoreTextLineBreakBackend`，仍**只调用现有**的 `TextPaginator.paginate(segment:constraints:backend:)`；它的 `makeSession` 由 **Core 在正确时点**调用（三项 constraints 合法且 segment 非空之后）并记下那一个 session；非空成功后由该 session 的 **exact line artifacts** 构造 paginated value；**空 segment 时 Core 不调用 `makeSession`，记录的 session 仍为 `nil`，故 `pageCount == 0`**。它是 **module-internal 实现细节，不是 public API**（写成 `internal` 而非字面 `private`，好让 `@testable` 能证明调用次数）。
+
+**被否决的替代方案**（`public` session overload）及其两条技术理由见 **ADR-0005 §B**。
+
+### 证据基线
+
+- **旧仓** `54zhien/nagi-engine` @ `47c071ad0cc99685cd6b51cfca5160b193706546`：`docs/adr/0006-coretext-backend-boundary.md:5` / `:19` / `:44` / `:56`，`docs/adr/0008-incremental-pagination-and-pagemap.md:30` / `:32` / `:42` / `:44`（逐条用途见 ADR-0005 的证据基线表）。
+- **主工程** `Seidoku Local Reader` @ `9f5cd1a6b2cfa638044a90b5713ad682c8f4b9dc`（实测）：**今天的 TXT 先转派生 EPUB、再进 Readium，且这是唯一一条 TXT 阅读路径**（`TXTReaderAssetService.swift:391` / `:43-45`、`EPUBReaderModel.swift:240-247`、`ReadiumService.swift:57` 的 `.epub` 硬闸门）；**没有**绕过 EPUB 直排的路径；主工程**尚未依赖 Core**（全仓 `enginecore` 命中 0）；主工程**没有分页器**（「页」在它那里是一张位图）。
+- **由基线钉死的范围**：E4 **只在 Core 仓内建立真实的 scene 消费者**，**不动主工程**。带门控的 Nagi TXT 实机接入（并保留 Readium 回退）是**下一阶段 E5**，本次**只登记为后续宿主 pilot，不在本次实现**。
+
+**两条留给 E5 的输入约束**（E4 不解决）：主工程 `CLAUDE.md` 明文「不要动用户的 UI … 包括开关」、其教训写着「让用户选渲染引擎这个设计本身就是错的」、仓内特性开关机制命中 **0** —— 所以 **E5 的 gate 必须是内部构建 / 能力门，不得是用户设置**；主工程 `ReadingPosition` 只有 `locatorJSON: String` 一个字段，非 Readium 排版将来要共用进度必须自己产出等价 locator JSON。
+
+### 已裁定的边界（全文见 ADR-0005 §E）
+
+1. **link/image**：纯文本支持域里 **link/image domain 不存在**，所以「没有 region」是**空支持域**，不是缺实现；类型上根本不携带这两个东西。
+2. **`FlowBoundaryPolicy`**：旧验证仓**未被整体纳入 Core** 的建议；E3 已用单 unit 结构固定 hard；E4 **不引入没有消费者的抽象**，**首次出现多 unit flow 消费者时重新定案**。
+3. **禁则与断行策略权**：留给 Nagi；本切片**保留权利但不实现**，与 ADR-0004 同口径。
+4. **`scene(at:)` 越界**：返回 `nil`，签名保持 optional，不另造 public error。
+
+**一条禁令（继承 E3）**：**不得恢复已关闭 PR #2 的 `PageMap` 代码，也不得恢复那份 ADR。**
 
 ## 一条约束
 
