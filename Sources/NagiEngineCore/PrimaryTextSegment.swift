@@ -59,14 +59,14 @@ public struct PrimaryTextSegment: Sendable {
     /// `0...utf16Count` and have **both** ends on legal storage boundaries. A
     /// legal empty range answers `""`; a range failing any check answers `nil`.
     ///
-    /// **Order is not checked here, and that is not an omission.** A value that
-    /// violates `Range`'s initializer precondition is outside this API's domain:
-    /// the caller triggers `Range`'s own precondition before this method is
-    /// reached, so a guard here would repeat a check that already ran and that
-    /// this layer cannot make better. The first CI run showed it — a test that
-    /// built a reversed `Range` was stopped by `Swift/Range.swift:179` *before*
-    /// entering this method. That is Swift 6.1.2 debug behaviour, measured; it
-    /// is not a claim about every optimisation mode.
+    /// **Order is not checked here, and that is not an omission.**
+    /// `lowerBound <= upperBound` is `Range`'s own invariant. A value violating
+    /// that precondition means the caller has already broken `Range`'s contract,
+    /// so it is outside this type's domain — this layer does not restate an
+    /// upstream type's contract. Whether a given build configuration executes
+    /// that check and traps is a standard-library and optimisation detail: this
+    /// Swift 6.1.2 debug CI did trap, before this method was entered, and that
+    /// is evidence for that configuration alone.
     ///
     /// Non-negativity and the upper bound **are** checked, before any slicing or
     /// offset arithmetic, because those values are perfectly constructible.
