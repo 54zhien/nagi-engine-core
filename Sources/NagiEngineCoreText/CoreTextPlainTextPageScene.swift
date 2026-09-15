@@ -381,24 +381,40 @@ public struct CoreTextPlainTextPageScene {
     ///
     /// No background is filled, and the drawing mode is set to fill explicitly
     /// rather than inherited: a caller that left a stroke or clip mode behind
-    /// would otherwise change what this draws. The graphics state is saved and
-    /// restored, so nothing leaks back.
+    /// would otherwise change what this draws.
+    ///
+    /// The graphics state is saved and restored, **and the text matrix and text
+    /// position are put back by hand**. An ordinary `restoreGState` does not
+    /// restore the text matrix — that is what the first CI run of this slice
+    /// measured — and this method changes the text position as well, so both are
+    /// captured on entry and written back on the way out. Nothing this method
+    /// sets survives it.
     ///
     /// The foreground colour comes from the caller and is applied as the
     /// context's fill colour — the session fixed
     /// `kCTForegroundColorFromContextAttributeName` when it shaped the text, so
     /// changing it here rebuilds nothing and moves no measurement.
     public func draw(in context: CGContext, foregroundColor: CGColor) {
+        let callerTextMatrix = context.textMatrix
+        let callerTextPosition = context.textPosition
+
         context.saveGState()
-        defer { context.restoreGState() }
+        defer {
+            context.restoreGState()
+            // The position is written first and the matrix last, because setting
+            // the text position can move the matrix again: whichever is written
+            // last is what the caller finally reads, and the matrix is the one
+            // that has to be exact.
+            context.textPosition = callerTextPosition
+            context.textMatrix = callerTextMatrix
+        }
 
         context.clip(to: CGRect(origin: .zero, size: size))
         context.setFillColor(foregroundColor)
         context.setTextDrawingMode(.fill)
 
         // The page's space is y-down and CoreText's text space is y-up, so the
-        // flip is applied once, here, and undone by the restore above. The
-        // caller only ever sees the page's own coordinates.
+        // flip is applied once, for this page's own drawing.
         context.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
 
         for line in lines {

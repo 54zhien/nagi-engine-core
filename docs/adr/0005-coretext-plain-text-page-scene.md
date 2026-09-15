@@ -172,14 +172,17 @@ public struct CoreTextPlainTextPageScene {
 
 - 调用方传入 `context` 时，**它的 current user space 必须已经把 `(0, 0)` 对应到目标 page 的左上角**，**正 x 向右、正 y 向下**。
 - **`draw` 不负责把 page 放进外部大画布** —— 那是调用方的事。scene 只在这块 `(0, 0, size.width, size.height)` 的**局部空间**里裁剪与画字。
-- scene **内部只承担 CoreText 文本空间所需的翻转与 text matrix 设置**，并在**退出前 `restore`**。
+- scene **内部只承担 CoreText 文本空间所需的翻转与 text matrix 设置**，并在退出前把 **`textMatrix` 与 `textPosition` 显式恢复为进入值** —— **不能只靠 `restoreGState`**，理由见 §D2。
 - **否则「内部翻转、调用方看到左上原点坐标」这件事无法从签名推导** —— 所以它是契约的一部分，必须写下来，也必须被测。
 
 ### D2. 绘制
 
 - **不填背景。** scene 只画字形；底色是调用方的事。
 - **裁到 page bounds**：绘制区域就是 `(0, 0, size.width, size.height)`。
-- **save / restore graphics state** 成对，不得把任何状态泄漏给调用方。
+- **save / restore graphics state** 成对，**并且另外显式捕获并恢复 `textMatrix` 与 `textPosition`**，不得把任何状态泄漏给调用方。
+  - **CI 已经证明的是哪一条**：run `34963033441` 直接证明**普通 graphics-state restore 不恢复 text matrix** —— `draw` 返回后，调用方读回的 matrix 含 `d = −1`，以及 `draw` 之后的平移。那次运行**没有**单独读回 `textPosition`，所以它**不能**被当作「restore 同样不恢复 textPosition」的证据。
+  - **本方法还显式改变 `textPosition`**（逐行设置 text position 才画得出字）。因此为兑现「零泄漏」，**两项都由实现捕获并恢复**，并由测试**分别**验证 —— 不是把一条实测推广成两条。
+  - 恢复的代码写法是**内部策略，不是契约**：契约只要求一件事 —— **入口读到的两项，出口读回时逐项原样**。
 - **前景色由调用方给出**（`foregroundColor` 参数），**绝不进入分页约束** —— `TextPaginationConstraints` 只有三个几何量，主题颜色与分页无关。
 - **让 context 的填色接管前景，靠的是 shaping 输入里的一个非度量 flag，不是 draw 时的 setFillColor 单独作用。** `NSAttributedString` 在**没有颜色属性时默认黑**，于是 CoreText 会自行在 context 上设色 —— 单靠 `CGContextSetFillColorWithColor` **不能保证接管**。因此：
   - **在创建 typesetter 的那一次 shaping 输入里**，属性字符串必须带上 **`kCTForegroundColorFromContextAttributeName: kCFBooleanTrue`**：这是 CoreText 官方的**非度量**属性（`CFBoolean`，默认 `false`），为 `true` 时前景取自 context 的填色，且它同时决定 `kCTUnderlineStyleAttributeName` 所用的颜色；
@@ -187,7 +190,7 @@ public struct CoreTextPlainTextPageScene {
   - **换色时不重建属性字符串、不二次 shaping**；
   - **判据（测试钉死）**：用**两种不同的前景色**分别绘制，**`pageRanges` 与各行 metrics 必须完全相同**。
 - 加这个 flag 是 R1 对 `CoreTextLineBreakSession` shaping 输入的**唯一增量改动**，它**不得改变**任何断行或度量（判据同上一条）。
-- scene 的 y 向下而 CoreText 的文本空间 y 向上，**翻转由 scene 在内部完成并还原**；调用方看到的永远是 §D1 那套坐标。
+- scene 的 y 向下而 CoreText 的文本空间 y 向上，**翻转由 scene 在内部完成，并在退出前连同 `textPosition` 一起显式还原**；调用方看到的永远是 §D1 那套坐标。
 
 ### D3. `nativePosition(at:)`
 
@@ -214,6 +217,14 @@ public struct CoreTextPlainTextPageScene {
 - `CTLineGetStringIndexForPosition` 给的是**一个用于插入位置的 string index**，官方允许它落在**该行首索引到末索引加一**之间。**本 ADR 一律称它为 CoreText hit-test string index / insertion index，不称 cluster boundary** —— 本层不做 cluster 级校正，也不宣称有。
 - **接受区间是该行 consumed range 的闭区间 `lowerBound...upperBound`。** 末索引加一是合法插入位置，**不得用 `Range.contains` 把 `upperBound` 拒掉**。
 - 通过闭区间之后，仍须 **`PrimaryTextSegment.isStorageBoundary(at:)` 为真**。
+
+**两条 CoreText 调用不互为逆运算**（本次 run 实测）：
+
+- `CTLineGetOffsetForStringIndex` 与 `CTLineGetStringIndexForPosition` **不承诺互为逆**。本次 newline corpus 已证实：在**由该行 `upperBound` 推出来的 end x** 上做位置命中，CoreText 返回的是**另一个**合法 index（该行的末字符），而不是 `upperBound` —— **这条 round-trip 没有闭合**。
+- **仅止于此。** 本次运行**没有**单独测「那个返回的 index 是否也精确等于同一个 x」，所以本节**不主张**「多个 insertion index 共享同一个可视 x」。那是**未经测试**的命题，写进契约就会变成一条事实。
+- 因此 **`nativePosition` 只返回 CoreText 在该点实际给出的那个 index**：它必须落在该行 consumed range 的闭区间内、并且是 storage boundary，否则 `nil`。
+- **本层绝不在 `x == width`、或索引等于某个值时强制改写结果。** 那等于在本层发明 caret / affinity 策略，与「不定义 caret policy」直接冲突。
+- 由此，闭区间接受（水平 advance 与索引各一条）的意义是**「不预先排除 CoreText 可能给出的 `upperBound`」**，**不是**承诺 offset 与 index 可逆。
 
 **返回 `nil` 的情形**（穷举）：非有限坐标；落在 page bounds **的闭边界之外**；**行距空白**；**`x > 该行 typographic width`**（短行右侧的空白）；`kCFNotFound`；index 落在 consumed range 的闭区间之外；index **不是 storage boundary**。
 
@@ -258,7 +269,9 @@ public struct CoreTextPlainTextPageScene {
 
 8. ASCII / CJK / surrogate（非 BMP）/ combining mark 四种语料各跑一次，页范围完整、页位在 storage boundary；**combining mark 只证明不擅自升级 caret policy**；
 9. **行距空白**与 **page 之外**的 `nativePosition(at:)` 返回 `nil`；页内正常位置返回非 `nil`；
-10. **命中行尾后一位**：该行 consumed range 的 `upperBound` 若是合法 storage boundary，则**必须返回非 `nil`**。该测试的 x **必须由 `CTLineGetOffsetForStringIndex` 对该行的 `upperBound` 推导**（y 取该行 band 内），**不得手写 `width`，也不得用 epsilon 去凑**；推导出的点落在 page bounds 内时，`nativePosition` 必须返回 `upperBound`。**另加**：`width == 0` 的行**不因水平前置检查被无条件排除**（其 x 落在闭区间内可以通过），最终结果仍由 `kCFNotFound` / string index 与 storage boundary 决定；
+10. **在由 `upperBound` 推导的 end x 上命中**：该测试的 x **必须由 `CTLineGetOffsetForStringIndex` 对该行的 `upperBound` 推导**（y 取该行 band 内），**不得手写 `width`，也不得用 epsilon 去凑**。要求两条，且只有这两条：① 该点**不得被水平条件提前拒绝**；② 返回值**等于 CoreText 在该点实际给出的合法 index** —— 测试必须用**同一个 relative point** 直接调 `CTLineGetStringIndexForPosition` 得到 `expected`，先断言 `expected` 通过 consumed 闭区间与 storage boundary 两道校验，**再**断言 scene 返回 `expected`。
+    **不得写死 `expected == upperBound`**（两条调用不互为逆，见 §D3），**也不得写死任何一次 CI 观测到的具体索引值**。
+    **另加**：`width == 0` 的行**不因水平前置检查被无条件排除**（其 x 落在闭区间内可以通过），最终结果仍由 CoreText 给出的 index 与 storage boundary 决定；
 11. **不同注入 `NodeID` 只改变命中身份**，`pageRanges` / `size` / `lineCount` / `utf16Offset` 全部不变；
 12. **两种前景色绘制不改变 `pageRanges` 与各行 metrics**；
 13. **非零绘制烟测**（真的画了东西、状态被还原、背景未被填），**但不做像素逐字节 golden**。测试必须**先把 bitmap `CGContext` 配成 §D1 那套 page-local、正 y 向下的 user space**，再验证**方向**（字形落在预期的页内位置）与**状态恢复**（`restore` 后调用方的状态未被改动）。
