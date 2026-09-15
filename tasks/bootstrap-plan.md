@@ -64,6 +64,23 @@
 
 **顺序不是日程，是依赖**：每个值模型的形状应由它的消费者倒推，而不是先摆好再去找人用。
 
+## E3 —— 横排纯文本的第一条真实分页纵切（R0 / R1 / R2 / R3）
+
+**方向**：`PrimaryTextSegment` → 新增的 **`NagiEngineCoreText`** target 用 CoreText 给出**候选行**与自然 block extent → **Core 自己验证候选并决定页边界** → 一个完整 unit 的 **transient `UnitPageRanges`**。
+
+**它不是** `PageMap`；不做 `ContentFragment` / `DocumentStore` / `PositionResolver` / `PageScene` / UI；**也不把分页决策交给 `CTFrame` / `CTFramesetter`**。
+
+| 段 | 内容 | 状态 |
+|---|---|---|
+| **R0** | **契约**：`docs/adr/0004-horizontal-text-pagination.md`、`CONTEXT.md` 的两个词、本节。**纯文档，不写代码。** | **已完成（Codex 复审通过）** |
+| **R1** | Core 侧类型 / 协议 / paginator + **fake backend** 的证伪测试。单独提交，推 Draft PR 跑 macOS CI 后停。 | 未开始 |
+| **R2** | `NagiEngineCoreText` target 与真实 backend + CoreText integration tests；**不做渲染**；CI 后停。 | 未开始 |
+| **R3** | README / 计划记录、最终 CI、转 ready、**合并前终审**。 | 未开始 |
+
+**四个确认点**：① R0 文档 diff → ② R1 的 Core 侧 diff（CI 绿后）→ ③ R2 的 CoreText 侧 diff（CI 绿后）→ ④ R3 合并前终审。
+
+**一条禁令**：**不得恢复已关闭 PR #2 的 `PageMap` 代码，也不得恢复那份 ADR。** 它被否决的四条理由仍在上面记着。
+
 ## 一条约束
 
 **计划写在这里，不写进 `CONTEXT.md`。** 词汇表只定义术语的含义与边界；把阶段、待办、实现顺序写进去，它就不再是词汇表，而两个用途会互相污染。
