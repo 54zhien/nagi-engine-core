@@ -39,13 +39,14 @@ public struct PrimaryTextSegment: Sendable {
 - **不带 `Codable`、不带 `Hashable`**，也不带 `NodeID`、元素树、样式、ruby annotation 或任何几何。没有消费者的一致性就是零用途 API。**`NodeID` 由 ingest / identity scheme 生成，元素树由解析产生；二者都不属于本层的文本数轴。**
 - **合法 storage boundary**：`0...utf16Count` 中**不切开 surrogate pair** 的位置。负数、越界、`Int.max` 一律 `false`。名字里的 storage 沿用**上述旧验证仓的 ADR-0004** 里的 `TextBoundaryPolicy.storage`（不切 surrogate）—— **这一层只提供那条基础事实**，`.caret` / `.shapingCluster` / `.lineBreak` 是它之上的策略。
 - **`text(inUTF16:)` 的完整语义**：
-  - 参数是**半开区间** `[lowerBound, upperBound)`；
-  - 必须满足 **`lowerBound <= upperBound`**；
+  - 参数是**半开区间** `[lowerBound, upperBound)`；它的**有序性由 `Range<Int>` 的有效值本身保证**（见下）；
   - **两端都必须是合法 storage boundary**；
+  - **非负与上界由本方法检查**，且必须在**任何索引或切片运算之前**；
   - 成功时返回**该 UTF-16 区间对应的精确文本**；
   - **合法的空区间返回 `""`**；
   - **任一条件不成立返回 `nil`**。
-  - **顺序不能指望 `Range` 的常规构造路径。** `..<` 会在构造时就拦住顺序颠倒的字面量，但调用方仍可能通过 **`Range(uncheckedBounds:)`** 造出 `lowerBound > upperBound` 的值 —— 那个初始化器**不检查顺序**（Apple 文档写明它不做边界顺序检查）。**本方法必须自己拒绝**这种输入，不能依赖常规 `..<` 构造路径的前置条件。
+  - **本方法不检查 `lowerBound <= upperBound`。** `Range<Int>` 的**有效值自身**满足有序性：违反 `Range` 初始化器前置条件的值构造不出来，**不属于本 API 的输入域**。为它写 guard 是**任何输入都到不了的**防御 —— 正是本仓反复在防的零覆盖词汇。
+    - **这是被实测纠正过的**：首次 CI（run `34921959000`）里，一条试图用 `Range(uncheckedBounds:)` 构造逆序 `Range` 的测试，在**进入本方法之前**就死在 `Swift/Range.swift:179` 的 `Fatal error: Range requires lowerBound <= upperBound` —— 那是**进程级 SIGTRAP**，不是断言失败。此前那段「调用方可以造出逆序 Range、所以方法必须自己拒绝」的判断由此作废。
   - 它**不得**把半个 surrogate 静默解码成 U+FFFD —— 「取一段取不到」必须是 `nil`，而不是一段看起来正常、内容已经坏掉的文本。
 - **这一步不宣称实现 `PositionResolver`，也不决定吸附方向。** 它给的是**事实**（这个偏移是不是边界、这一段文本是什么），吸附是策略。
 

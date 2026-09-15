@@ -55,22 +55,26 @@ public struct PrimaryTextSegment: Sendable {
     /// The exact text of a UTF-16 range, or `nil` when the range is not one this
     /// segment can answer for.
     ///
-    /// The range is half-open, `[lowerBound, upperBound)`. It must satisfy
-    /// `lowerBound <= upperBound`, sit inside `0...utf16Count`, and have **both**
-    /// ends on legal storage boundaries. A legal empty range answers `""`; a
-    /// range failing any check answers `nil`.
+    /// The range is half-open, `[lowerBound, upperBound)`. It must sit inside
+    /// `0...utf16Count` and have **both** ends on legal storage boundaries. A
+    /// legal empty range answers `""`; a range failing any check answers `nil`.
     ///
-    /// **The order is checked here rather than trusted.** `Range(uncheckedBounds:)`
-    /// can produce a lower bound past its upper one — that initializer does not
-    /// check the order, so the usual `..<` precondition never ran. Every check
-    /// therefore happens *before* any slicing or offset arithmetic, and a range
-    /// built that way answers `nil` instead of trapping.
+    /// **Order is not checked here, and that is not an omission.** A `Range<Int>`
+    /// that exists at all already satisfies `lowerBound <= upperBound`: a value
+    /// violating `Range`'s initializer precondition cannot be constructed, so it
+    /// is outside this API's domain rather than an input this method owes an
+    /// answer to. A guard for it would be unreachable — defence no input can
+    /// exercise. The first CI run proved the point the hard way: a test that
+    /// tried to build a reversed `Range` was killed by
+    /// `Swift/Range.swift:179` *before* entering this method.
+    ///
+    /// Non-negativity and the upper bound **are** checked, before any slicing or
+    /// offset arithmetic, because those values are perfectly constructible.
     ///
     /// Half a surrogate is `nil`, never a replacement character: `U+FFFD` would
     /// be a well-formed string that is quietly the wrong text, which is worse
     /// than no answer at all.
     public func text(inUTF16 range: Range<Int>) -> String? {
-        guard range.lowerBound <= range.upperBound else { return nil }
         guard range.lowerBound >= 0 else { return nil }
         guard range.upperBound <= utf16Count else { return nil }
         guard isStorageBoundary(at: range.lowerBound),

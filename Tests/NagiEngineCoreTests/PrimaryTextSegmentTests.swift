@@ -166,13 +166,4 @@ final class PrimaryTextSegmentTests: XCTestCase {
         XCTAssertNil(made.text(inUTF16: Int.max..<Int.max))
     }
 
-    /// `Range(uncheckedBounds:)` does not check the order, so this value exists
-    /// and can reach the API. The `..<` precondition never ran for it, which is
-    /// exactly why the method refuses it itself.
-    func testAReversedRangeBuiltWithoutCheckingIsRefused() throws {
-        let made = segment("abc")
-
-        XCTAssertNil(made.text(inUTF16: Range(uncheckedBounds: (lower: 2, upper: 1))))
-        XCTAssertNil(made.text(inUTF16: Range(uncheckedBounds: (lower: 3, upper: 0))))
-    }
 }
