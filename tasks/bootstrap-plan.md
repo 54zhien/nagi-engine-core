@@ -59,7 +59,7 @@
 | **R0** | **契约**：`docs/adr/0003-primary-text-segment.md` 与本节。**纯文档，不写代码。** | **已完成（Codex 复审通过）** |
 | **R1** | 实现 `PrimaryTextSegment`（`isStorageBoundary(at:)` / `text(inUTF16:)`）与测试。 | 未开始 |
 
-**R0 的定案**（全文见 ADR-0003）：`PrimaryTextSegment` 是**一个完整 `DocumentUnit` 的 unit-local primary text**，不是 publication-global 文本、也不是 `ContentShard`；构造器**不解析、不折叠、不归一化**，canonical 化由 ingest 负责；**不带 `Codable` / `Hashable` / `NodeID` / 元素树 / 样式 / ruby annotation / 几何**；合法 storage boundary 是 `0...utf16Count` 中不切开 surrogate pair 的位置（负数、越界、`Int.max` 一律 `false`）；`text(inUTF16:)` 的参数是**半开区间**，要求 **`lowerBound <= upperBound`** 且**两端均为合法边界**，成功时返回该区间的精确文本，**合法的空区间返回 `""`**，**任一条件不成立返回 `nil`** —— **顺序要 API 自己拒绝**（Swift 的 `Range.init(uncheckedBounds:)` 不检查顺序），且**不得把半个 surrogate 静默解码成 U+FFFD**。
+**R0 的定案**（全文见 ADR-0003）：`PrimaryTextSegment` 是**一个完整 `DocumentUnit` 的 unit-local primary text**，不是 publication-global 文本、也不是 `ContentShard`；构造器**不解析、不折叠、不归一化**，canonical 化由 ingest 负责；**不带 `Codable` / `Hashable` / `NodeID` / 元素树 / 样式 / ruby annotation / 几何**；合法 storage boundary 是 `0...utf16Count` 中不切开 surrogate pair 的位置（负数、越界、`Int.max` 一律 `false`）；`text(inUTF16:)` 的参数是**半开区间**，**两端必须均为合法 storage boundary**、**非负与上界由方法自己检查**（且在任何索引或切片运算之前），成功时返回该区间的精确文本，**合法的空区间返回 `""`**，任一条件不成立返回 `nil`；**有序性不由方法检查** —— `Range<Int>` 的有效值自身满足 `lowerBound <= upperBound`，违反 `Range` 初始化器前置条件的值构造不出来（首次 CI run `34921959000` 里，一条构造逆序 `Range` 的测试在**进入方法之前**就被 `Swift/Range.swift` 打死）；且**不得把半个 surrogate 静默解码成 U+FFFD**。
 
 **顺序不是日程，是依赖**：每个值模型的形状应由它的消费者倒推，而不是先摆好再去找人用。
 
