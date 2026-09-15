@@ -45,8 +45,9 @@ public struct PrimaryTextSegment: Sendable {
   - 成功时返回**该 UTF-16 区间对应的精确文本**；
   - **合法的空区间返回 `""`**；
   - **任一条件不成立返回 `nil`**。
-  - **本方法不检查 `lowerBound <= upperBound`。** `Range<Int>` 的**有效值自身**满足有序性：违反 `Range` 初始化器前置条件的值构造不出来，**不属于本 API 的输入域**。为它写 guard 是**任何输入都到不了的**防御 —— 正是本仓反复在防的零覆盖词汇。
-    - **这是被实测纠正过的**：首次 CI（run `34921959000`）里，一条试图用 `Range(uncheckedBounds:)` 构造逆序 `Range` 的测试，在**进入本方法之前**就死在 `Swift/Range.swift:179` 的 `Fatal error: Range requires lowerBound <= upperBound` —— 那是**进程级 SIGTRAP**，不是断言失败。此前那段「调用方可以造出逆序 Range、所以方法必须自己拒绝」的判断由此作废。
+  - **本方法不重复检查 `lowerBound <= upperBound`。** 违反 `Range` 初始化器前置条件的值**不在本 API 的支持域**：调用方在把参数交进来之前就会先触发 `Range` 自己的前置条件，轮不到本方法作答。本层为它设 guard 只会重复一道已经存在、且本层无从判断得更好的检查。
+    - **这一次是实测出来的**：Swift 6.1.2 的 Debug CI（run `34921959000`）里，一条试图用 `Range(uncheckedBounds:)` 构造逆序 `Range` 的测试，**在进入本方法之前**就被 `Swift/Range.swift:179` 的 `Fatal error: Range requires lowerBound <= upperBound` 终止 —— 进程级 SIGTRAP，不是断言失败。
+    - **口径限定**：这是**本次构建配置**（Swift 6.1.2 · Debug · macOS CI）的实测行为，**不是**「任何优化模式下该值都不可能有物理表示」这类断言。结论只到「本方法不承担这项检查」为止 —— 此前那段「调用方可以造出逆序 `Range`、所以方法必须自己拒绝」的判断由此作废，但不往前多走一步。
   - 它**不得**把半个 surrogate 静默解码成 U+FFFD —— 「取一段取不到」必须是 `nil`，而不是一段看起来正常、内容已经坏掉的文本。
 - **这一步不宣称实现 `PositionResolver`，也不决定吸附方向。** 它给的是**事实**（这个偏移是不是边界、这一段文本是什么），吸附是策略。
 
@@ -65,7 +66,7 @@ public struct PrimaryTextSegment: Sendable {
 
 - **`ContentFragment`**：它究竟覆盖**整个 unit** 还是**局部 shard**、是否需要 unit-relative base offset，**尚未定案**。形状未定就落类型，等于把猜测写成契约。
 - **完整 `PositionResolver`**：还缺**吸附方向**与 caret / shaping / line-break 三套策略。现在公开一个半成品，会**重犯 PR #2 的错误** —— 那个 PR 的 CI 是绿的，但契约不成立。
-- **`PageMap`**：仍缺页范围与单元长度、Layout Signature / generation、完整性状态，以及部分分页下的 Page identity。
+- **`PageMap`**：本 ADR 与它的实现**已经提供 unit-local 长度**（`utf16Count`），但 PageMap 仍缺**页范围**、**Layout Signature / generation**、**完整性状态**、**部分分页下的 Page identity**，以及**把 segment / length 交付给消费者的正式路径**。（与 README 的措辞一致。）
 
 ## 与既有决定的关系
 

@@ -31,7 +31,8 @@ public struct NativePosition: Codable, Hashable, Sendable {
 public struct PrimaryTextSegment: Sendable {
     public let unitID: DocumentUnitID
     public let string: String
-    public var utf16Count: Int
+    public init(unitID: DocumentUnitID, string: String)
+    public var utf16Count: Int { get }
     public func isStorageBoundary(at utf16Offset: Int) -> Bool
     public func text(inUTF16 range: Range<Int>) -> String?
 }
