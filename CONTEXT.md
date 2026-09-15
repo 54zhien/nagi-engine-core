@@ -100,6 +100,16 @@ _Avoid_: 配置, Preferences, Settings
 一次排版产出的 Native Position ↔ 页序号的索引。**可部分完成**，是可由 Layout Signature 完全重建的派生缓存。
 _Avoid_: PageCache, 目录, 分页表
 
+**Measured Line**:
+排版后端在 unit-local primary text 上，对一个连续 consumed range 给出的候选行，连同它在 block 轴上的自然 extent。
+**候选行不是页边界** —— 它是后端的一次测量；页边界由引擎自己决定。
+_Avoid_: 行, line box, 断行点, 页边界
+
+**Unit Page Ranges**:
+在一组约束下，一个完整 Document Unit 的**有序、unit-local、半开**页范围序列。
+它是 **transient** 的 —— **不自带 Layout Signature**，只对生成它的那次调用有意义；它是未来 **Page Map** 的**输入，而不是 Page Map**。
+_Avoid_: PageMap, Page Cache, 分页表, 持久页表
+
 **Page Scene**:
 一次排版条件下某一页的视觉几何结果 —— 这一页有哪些字形、图像，各自在哪。
 不认识 EPUB/MOBI，不承载持久阅读位置，不承载批注。**当前可见页的交互必须完全同步** —— 它自带完成命中测试所需的全部局部映射。
