@@ -1,6 +1,6 @@
 # Nagi Engine Core
 
-> Nagi 自研阅读引擎的**生产核心**。**它现在还替换不了 Nagi 阅读器** —— 这里有清单、位置、一段主文本数轴，以及一条横排纯文本的分页纵切，但**没有任何把它画到屏幕上的东西**，也没有宿主集成。
+> Nagi 自研阅读引擎的**生产核心**。**它现在还替换不了 Nagi 阅读器** —— 这里有清单、位置、一段主文本数轴，以及一条横排纯文本的分页纵切；这条纵切现在能**画出一页，并把页内的点同步映射成位置**，但**尚未接进任何宿主**，也没有 ingest、`ContentFragment` 或 EPUB 样式。
 
 ## 这个仓是什么，不是什么
 
@@ -79,16 +79,53 @@ let pages: UnitPageRanges = try TextPaginator.paginate(
 
 `UnitPageRanges` 是**一个完整 unit 的 transient 页范围**：有序、unit-local、半开、无缝覆盖。**它不携带 Layout Signature，也不是 `PageMap`** —— 将来那份索引要自建身份。
 
-**还没有**：`ContentFragment`、`DocumentStore`、`PositionResolver`、`PageMap`、`LayoutSignature`、`PageScene`、任何渲染、任何 UI、任何宿主适配、任何 EPUB ingest。`DocumentManifest` 本身也**还不是** `Codable`。
+**在分页之上，现在还能画出一页，并同步命中它**（同一个 target）：
+
+```swift
+// 由 ingest 注入的、覆盖整段纯文本的单一身份。本层不生成、也不猜 NodeID。
+let nodeID = NodeID(rawValue: "chapter-3")
+
+let paginated: CoreTextPaginatedPlainText = try backend.makePaginatedPlainText(
+    segment: segment,
+    nodeID: nodeID,
+    constraints: constraints
+)
+
+let pageRanges: UnitPageRanges = paginated.pageRanges   // 仍由 TextPaginator 决定
+let scene = paginated.scene(at: 0)                      // 越界下标得 nil
+
+// context 与前景色都由宿主提供 —— 这里只是占位名。
+// 本仓不认识 UIKit / SwiftUI 的视图类型，也不假定宿主用哪一种。
+scene?.draw(in: hostProvidedContext, foregroundColor: hostProvidedForegroundColor)
+
+// 点是页局部的：左上原点、x 向右、y 向下。
+if let point = hostProvidedPointInPageCoordinates {
+    let position: NativePosition? = scene?.nativePosition(at: point)
+}
+```
+
+scene 的坐标是 **page-local、左上原点、x 向右、y 向下**；`draw` 只在这块 `(0, 0, size.width, size.height)` 里画字、**不填背景**，并在退出前**显式恢复 `textMatrix` 与 `textPosition`** —— run `34963033441` 直接证明的是**普通 `restoreGState` 没有恢复 `textMatrix`**；而 `draw` 本身还会改 `textPosition`，所以**两项都由实现捕获并恢复**。`nativePosition(at:)` **不做 IO、不 async、不物化文档**：页外、行距空白、短行右侧空白一律 `nil`。
+
+**三条结构保证**（是构造，不是纪律）：
+
+1. **页界仍由现有的 `TextPaginator` 决定。** `makePaginatedPlainText` 只是把现有的 `paginate(segment:constraints:backend:)` 调用一次并留住它产出的行 —— **Core 侧一行未改**：`NagiEngineCore` 的公开面与 `Sources/NagiEngineCore/TextPagination.swift` 逐字不变。
+2. **scene 复用同一次 session 的 exact `CTLine`，不二次 shaping。** 页范围与行 artifact 必然出自**同一次调用、同一个 session、同一套 font 与 constraints**；取一页不会再向后端要一行。
+3. **`NodeID` 由外部注入，且覆盖整段纯文本。** 换一个 `NodeID` 只改变命中身份，**不改变任何范围或几何**。
+
+**生命周期**：`font`、`languageTag`、`inlineExtent`、`blockExtent`、`lineSpacing` **任一变化**，宿主必须**丢弃整个 `CoreTextPaginatedPlainText` 及其全部 scene 并重建**。它是 transient 的：**非 `Codable` / `Hashable` / `Sendable`**，**不是 `PageMap`**，也**不是 layout identity**。见 **ADR-0005**。
+
+**还没有**：`ContentFragment`、`DocumentStore`、`PositionResolver`、`PageMap`、`LayoutSignature`；**完整的多节点 `PageScene`**（这一页只认单节点纯文本）、**选区 / 链接 / 图片命中 / 无障碍**；**任何宿主适配**、**任何 EPUB ingest 与样式**、任何 UI。`DocumentManifest` 本身也**还不是** `Codable`。
 
 **距离实机替换，缺的是好几层，不是两根线：**
 
-- **正式的内容输入路径** —— `ContentFragment` / ingest / store。今天这条分页纵切吃的是**已经 canonical 化好的字符串**：谁产出它、何时物化、怎么缓存，都还没有着落。
-- **可渲染且可交互的 `PageScene`** —— 不只是把字画出来。页内命中测试、选区起点、链接点击必须**完全同步**，所以它得自带完成这些所需的局部映射。
+- **正式的内容输入路径** —— `ContentFragment` / ingest / store。这条纵切吃的是**已经 canonical 化好的字符串**：谁产出它、何时物化、怎么缓存，都还没有着落。
+- **更宽的 `PageScene`** —— 现在这一页只覆盖**横排、单节点纯文本**：没有多节点元素↔范围映射，没有选区起点，没有链接与图片命中，也不涉及无障碍。**对本切片已经支持的那一件事 —— 点 → `NativePosition` 命中 —— 同步性已经兑现**（`nativePosition(at:)` 不做 IO、不 async、不物化文档）；**其余的页内交互仍未交付**。
 - **宿主适配** —— 把上面这些接进一个真正的阅读器。
 - 再往后，**EPUB 的整体替换**还需要 CSS / style 级联、ruby 与竖排等一批后续能力。
 
-换句话说：现在能算出**一个单元的分页边界**，仅此而已。
+换句话说：现在能在 Core 仓内**把一个 unit 分页、画出一页、并把页内的点同步映射成 `NativePosition`** —— 但**它还没接进 app**。
+
+**下一阶段 E5** 才做宿主：一个 **TXT 宿主 pilot**，用一个**内部构建 / 能力门**（**不是用户设置**）决定是否走原生 TXT 直排，并**保留 Readium 回退**。E4 不碰主工程。
 
 ## 构建与测试
 
