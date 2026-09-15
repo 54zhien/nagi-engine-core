@@ -41,7 +41,7 @@
 3. **两层数组让 `DocumentOrderKey` 的跨单元 `Comparable` 没有真实消费** —— 单元内每个键的 `unitIndex` 都相同，比较退化成偏移；真正让它成为**文档**序的那一半无人使用。
 4. **只实现了词表里一个完成态术语的一半** —— `CONTEXT.md` 的 Page Map 是「Native Position ↔ 页序号、可部分完成、可由 Layout Signature 重建」，而那一版没有 position、没有页范围、没有 signature、没有完整性。
 
-**PageMap 要等这些定案**：Native Position、页范围与单元长度、Layout Signature / generation、完整性状态，以及部分分页下的 Page identity。
+**PageMap 要等这些定案**：页范围、Layout Signature / generation、完整性状态、部分分页下的 Page identity，以及把 segment / length 交付给消费者的正式路径 —— Native Position 与 unit-local 长度已由 E2 提供。
 
 旧分支的 `docs/adr/0002-pagemap-boundary.md` 从未进入 `main`，**不是 canonical ADR**；未来若重启 PageMap，必须基于当时的 `main` 重新定案，**不得恢复该 accepted 文件**。
 
@@ -52,7 +52,7 @@
 - 旧仓的 **canonical-text 实现切片**（`Sources/SpikeAKit/CanonicalText.swift`）把**可靠的 UTF-16 数轴、元素身份与范围映射、空白折叠、XHTML 解析**四件事捆在一起 —— **不能整体搬入 Core**：后三件都是 **ingest** 的职责。（**`NodeID` 不在其中**，它由 identity scheme 构造。）
 - `ContentFragment` 究竟覆盖**整个 unit** 还是**局部 shard**、是否需要 unit-relative base offset，**尚未定案**。形状未定就落类型，是把猜测写成契约。
 - 完整 `PositionResolver` 还缺**吸附方向**与 caret / shaping / line-break 策略。**现在公开半成品会重犯 PR #2 的错误** —— 那个 PR 的 CI 是绿的，契约不成立。
-- `PageMap` 仍缺页范围与单元长度、Layout Signature / generation、完整性状态、部分分页下的 Page identity。
+- `PageMap` 仍缺**页范围**、**Layout Signature / generation**、**完整性状态**、**部分分页下的 Page identity**，以及**把 segment / length 交付给消费者的正式路径** —— Native Position 与 unit-local 长度这两项 E2 已经提供。
 
 | 段 | 内容 | 状态 |
 |---|---|---|
@@ -60,7 +60,7 @@
 | **R1** | 实现 `PrimaryTextSegment`（`isStorageBoundary(at:)` / `text(inUTF16:)`）与 **13 条**测试。 | **已完成（Codex 静态复审通过；CI 35 / 0）** |
 | **R2** | **最终远端门禁**：本 PR 的最终 head 在 macOS CI 上 **35 tests / 0 failures**，并记录两次**由 CI 发现、各自单独提交**的纠正。 | **已完成（最终 head CI 35 / 0）** |
 
-**R0 的定案**（全文见 ADR-0003）：`PrimaryTextSegment` 是**一个完整 `DocumentUnit` 的 unit-local primary text**，不是 publication-global 文本、也不是 `ContentShard`；构造器**不解析、不折叠、不归一化**，canonical 化由 ingest 负责；**不带 `Codable` / `Hashable` / `NodeID` / 元素树 / 样式 / ruby annotation / 几何**；合法 storage boundary 是 `0...utf16Count` 中不切开 surrogate pair 的位置（负数、越界、`Int.max` 一律 `false`）；`text(inUTF16:)` 的参数是**半开区间**，**两端必须均为合法 storage boundary**、**非负与上界由方法自己检查**（且在任何索引或切片运算之前），成功时返回该区间的精确文本，**合法的空区间返回 `""`**，任一条件不成立返回 `nil`；**有序性不由方法检查** —— `Range<Int>` 的有效值自身满足 `lowerBound <= upperBound`，违反 `Range` 初始化器前置条件的值构造不出来（首次 CI run `34921959000` 里，一条构造逆序 `Range` 的测试在**进入方法之前**就被 `Swift/Range.swift` 打死）；且**不得把半个 surrogate 静默解码成 U+FFFD**。
+**R0 的定案**（全文见 ADR-0003）：`PrimaryTextSegment` 是**一个完整 `DocumentUnit` 的 unit-local primary text**，不是 publication-global 文本、也不是 `ContentShard`；构造器**不解析、不折叠、不归一化**，canonical 化由 ingest 负责；**不带 `Codable` / `Hashable` / `NodeID` / 元素树 / 样式 / ruby annotation / 几何**；合法 storage boundary 是 `0...utf16Count` 中不切开 surrogate pair 的位置（负数、越界、`Int.max` 一律 `false`）；`text(inUTF16:)` 的参数是**半开区间**，**两端必须均为合法 storage boundary**、**非负与上界由方法自己检查**（且在任何索引或切片运算之前），成功时返回该区间的精确文本，**合法的空区间返回 `""`**，任一条件不成立返回 `nil`；**有序性不由方法重复检查** —— 违反 `Range` 初始化器前置条件的值**不在本 API 支持域**（调用方在交参数之前就会先触发 `Range` 自己的前置条件；首次 CI run `34921959000`，Swift 6.1.2 **Debug** 下一条构造逆序 `Range` 的测试在**进入方法之前**就被 `Swift/Range.swift` 终止 —— 那是**本次构建配置**的实测，不是对任何优化模式的断言）；且**不得把半个 surrogate 静默解码成 U+FFFD**。
 
 **顺序不是日程，是依赖**：每个值模型的形状应由它的消费者倒推，而不是先摆好再去找人用。
 

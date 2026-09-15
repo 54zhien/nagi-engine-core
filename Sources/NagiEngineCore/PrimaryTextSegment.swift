@@ -59,14 +59,14 @@ public struct PrimaryTextSegment: Sendable {
     /// `0...utf16Count` and have **both** ends on legal storage boundaries. A
     /// legal empty range answers `""`; a range failing any check answers `nil`.
     ///
-    /// **Order is not checked here, and that is not an omission.** A `Range<Int>`
-    /// that exists at all already satisfies `lowerBound <= upperBound`: a value
-    /// violating `Range`'s initializer precondition cannot be constructed, so it
-    /// is outside this API's domain rather than an input this method owes an
-    /// answer to. A guard for it would be unreachable — defence no input can
-    /// exercise. The first CI run proved the point the hard way: a test that
-    /// tried to build a reversed `Range` was killed by
-    /// `Swift/Range.swift:179` *before* entering this method.
+    /// **Order is not checked here, and that is not an omission.** A value that
+    /// violates `Range`'s initializer precondition is outside this API's domain:
+    /// the caller triggers `Range`'s own precondition before this method is
+    /// reached, so a guard here would repeat a check that already ran and that
+    /// this layer cannot make better. The first CI run showed it — a test that
+    /// built a reversed `Range` was stopped by `Swift/Range.swift:179` *before*
+    /// entering this method. That is Swift 6.1.2 debug behaviour, measured; it
+    /// is not a claim about every optimisation mode.
     ///
     /// Non-negativity and the upper bound **are** checked, before any slicing or
     /// offset arithmetic, because those values are perfectly constructible.
