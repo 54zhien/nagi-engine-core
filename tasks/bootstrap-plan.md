@@ -73,11 +73,13 @@
 | 段 | 内容 | 状态 |
 |---|---|---|
 | **R0** | **契约**：`docs/adr/0004-horizontal-text-pagination.md`、`CONTEXT.md` 的两个词、本节。**纯文档，不写代码。** | **已完成（Codex 复审通过）** |
-| **R1** | Core 侧类型 / 协议 / paginator + **fake backend** 的证伪测试。单独提交，推 Draft PR 跑 macOS CI 后停。 | 未开始 |
-| **R2** | `NagiEngineCoreText` target 与真实 backend + CoreText integration tests；**不做渲染**；CI 后停。 | 未开始 |
-| **R3** | README / 计划记录、最终 CI、转 ready、**合并前终审**。 | 未开始 |
+| **R1** | Core 侧类型 / 协议 / paginator + **fake backend** 的证伪测试。单独提交，推 Draft PR 跑 macOS CI 后停。 | **已完成**（CI run `34930167308` **55 / 0**；Codex 静态复审与远端门禁均通过） |
+| **R2** | `NagiEngineCoreText` target 与真实 backend + CoreText integration tests；**不做渲染**；CI 后停。 | **已完成**（CI run `34930826483` **65 / 0**；Codex 复审通过） |
+| **R3** | **文档收口**：`README.md` + 本 ADR 的实现与实测记录 + 本计划；随后最终 CI、转 ready、**合并前终审**。 | **文档已完成（Codex 复审通过）；最终 head CI / ready / merge 状态以 PR #5 为准** |
 
 **四个确认点**：① R0 文档 diff → ② R1 的 Core 侧 diff（CI 绿后）→ ③ R2 的 CoreText 侧 diff（CI 绿后）→ ④ R3 合并前终审。
+
+**下一步依赖（E3 合并之后）**：**仍然先不做 `PageMap`。** 下一纵切应当由**能渲染 page scene 或做宿主集成的最小消费者**倒推，而不是由已经写好的类型往前推；具体方案由 **Codex 另行定案** —— **本文件不授权自行开始 E4**。
 
 **一条禁令**：**不得恢复已关闭 PR #2 的 `PageMap` 代码，也不得恢复那份 ADR。** 它被否决的四条理由仍在上面记着。
 

@@ -1,6 +1,6 @@
 # Nagi Engine Core
 
-> Nagi 自研阅读引擎的**生产核心**。**当前不可用** —— 这里只有第一批纯值模型，没有任何能读一本书的代码。
+> Nagi 自研阅读引擎的**生产核心**。**它现在还替换不了 Nagi 阅读器** —— 这里有清单、位置、一段主文本数轴，以及一条横排纯文本的分页纵切，但**没有任何把它画到屏幕上的东西**，也没有宿主集成。
 
 ## 这个仓是什么，不是什么
 
@@ -14,6 +14,8 @@
 **两个仓之间没有源码依赖，也不会有。** 本仓不把旧仓当包依赖，旧仓不把本仓当依赖；共享的只有术语与结论，形式是文档，不是 link。
 
 ## 现在有什么
+
+**核心值层**（`NagiEngineCore`，平台中立）：
 
 ```swift
 public struct DocumentManifest: Sendable {
@@ -44,7 +46,49 @@ public struct PrimaryTextSegment: Sendable {
 
 还有一个单元的**主文本数轴**：`PrimaryTextSegment` 是**一个完整 unit 的 unit-local primary text** —— 不是全书文本，也不是 `ContentShard`。它只给两个事实：某个偏移是不是**合法 storage boundary**（`0...utf16Count` 里不切开 surrogate pair 的位置），以及某个 UTF-16 **半开区间**对应的**精确文本**（两端都得是合法边界，否则 `nil` —— 不会把半个 surrogate 解成 U+FFFD）。构造器**不解析、不折叠、不归一化**，canonical 化是 ingest 的事；它**不是** `PositionResolver`，**不决定吸附方向**，也**不是 caret policy** —— combining mark 内部仍是合法边界，因为它只认 surrogate pair。见 **ADR-0003**。
 
-**还没有**：`PageMap`、`PositionResolver`、`DocumentStore`、`PageScene`、`LayoutSignature`、任何解析器、任何排版后端、任何 UI。**`PageMap` 仍是后置的** —— Native Position 与 unit-local 长度这两项已经具备，它仍要等**页范围**、**Layout Signature / generation**、**完整性状态**、**部分分页下的 Page identity**，以及**把 segment 交付给消费者的正式路径**。`DocumentManifest` 本身也**还不是** `Codable` —— 序列化形状要等真正需要持久化的那个消费者来定，不是现在猜。
+**分页纵切**（`NagiEngineCoreText`，**Apple-only**）：
+
+```swift
+import CoreText
+import NagiEngineCore
+import NagiEngineCoreText
+
+let segment = PrimaryTextSegment(
+    unitID: DocumentUnitID(rawValue: "OEBPS/chapter.xhtml"),
+    string: canonicalPrimaryText          // 已经 canonical 化好的一段，见 ADR-0003
+)
+
+let constraints = TextPaginationConstraints(
+    inlineExtent: 320,
+    blockExtent: 480,
+    lineSpacing: 4
+)
+
+let backend = CoreTextLineBreakBackend(
+    font: CTFontCreateWithName("PingFang SC" as CFString, 16, nil)
+)
+
+let pages: UnitPageRanges = try TextPaginator.paginate(
+    segment: segment,
+    constraints: constraints,
+    backend: backend
+)
+```
+
+**分页是 Core 拥有的。** 后端只给**候选行**（`CTTypesetterSuggestLineBreak` 候选 + `CTLine` 的自然 `ascent + descent + leading`）；**页边界由 `TextPaginator` 决定**，它逐项校验候选并自己分组。实现是横排、单一 `CTFont`、常量非负 line spacing、矩形 extent —— 见 **ADR-0004**。
+
+`UnitPageRanges` 是**一个完整 unit 的 transient 页范围**：有序、unit-local、半开、无缝覆盖。**它不携带 Layout Signature，也不是 `PageMap`** —— 将来那份索引要自建身份。
+
+**还没有**：`ContentFragment`、`DocumentStore`、`PositionResolver`、`PageMap`、`LayoutSignature`、`PageScene`、任何渲染、任何 UI、任何宿主适配、任何 EPUB ingest。`DocumentManifest` 本身也**还不是** `Codable`。
+
+**距离实机替换，缺的是好几层，不是两根线：**
+
+- **正式的内容输入路径** —— `ContentFragment` / ingest / store。今天这条分页纵切吃的是**已经 canonical 化好的字符串**：谁产出它、何时物化、怎么缓存，都还没有着落。
+- **可渲染且可交互的 `PageScene`** —— 不只是把字画出来。页内命中测试、选区起点、链接点击必须**完全同步**，所以它得自带完成这些所需的局部映射。
+- **宿主适配** —— 把上面这些接进一个真正的阅读器。
+- 再往后，**EPUB 的整体替换**还需要 CSS / style 级联、ruby 与竖排等一批后续能力。
+
+换句话说：现在能算出**一个单元的分页边界**，仅此而已。
 
 ## 构建与测试
 
@@ -53,7 +97,9 @@ swift build
 swift test
 ```
 
-无平台绑定：第一批是纯值模型，不依赖任何 deployment target。
+**按 product 分**：`NagiEngineCore` **平台中立**（用 Foundation，不声明 deployment target）；`NagiEngineCoreText` 链接 CoreText，因此是 **Apple-only**。「整个 package 在所有平台默认全目标可建」这句**不成立** —— 能不能覆盖全目标，取决于选哪个 product / target 与条件编译。
+
+**本仓不声明最低 OS**：那是一个应由真实部署需求决定的数，不是在这里猜的。
 
 ## 设计决定在哪
 
