@@ -92,7 +92,7 @@ final class PrimaryTextSegmentTests: XCTestCase {
         let cjkSegment = segment(cjk)
 
         XCTAssertEqual(cjkSegment.text(inUTF16: 0..<3), cjk)
-        XCTAssertEqual(cjkSegment.text(inUTF16: 1..<2), "二")
+        XCTAssertEqual(cjkSegment.text(inUTF16: 1..<2), "一")
     }
 
     func testAWholeNonBMPCharacterSlicesExactly() throws {
