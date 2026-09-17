@@ -98,8 +98,8 @@ PrimaryTextSegment + 由 ingest 注入的单一 NodeID
 | 段 | 内容 | 状态 |
 |---|---|---|
 | **R0** | **契约**：`docs/adr/0005-coretext-plain-text-page-scene.md` 与本节。**纯文档，不写代码。** | **已完成（Codex 复审通过）** |
-| **R1** | CoreText 侧：module-internal recording backend、session 的 line artifacts、`CoreTextPaginatedPlainText`、`CoreTextPlainTextPageScene`、`draw`、`nativePosition(at:)` 与测试；开 **Draft PR** 跑 macOS CI 后停。 | **已完成（Codex 复审通过）**：三笔历史中的 R1 实现 `10f3bd9` 与 CI 纠正 `5b93c3b`；当前 run **`34964944798`** = **81 tests / 0 failures**（六 suite 10 / 16 / 9 / 13 / 13 / 20） |
-| **R2** | 文档收口、最终 CI、转 ready、**合并前终审**。 | **文档收口已完成（Codex 复审通过）；最终 head CI、转 ready、合并前终审尚未执行** |
+| **R1** | CoreText 侧：module-internal recording backend、session 的 line artifacts、`CoreTextPaginatedPlainText`、`CoreTextPlainTextPageScene`、`draw`、`nativePosition(at:)` 与测试；开 **Draft PR** 跑 macOS CI 后停。 | **已完成（Codex 复审通过）**：三笔历史中的 R1 实现 `10f3bd9` 与 CI 纠正 `5b93c3b`；CI run **`34964944798`** = **81 tests / 0 failures**（六 suite 10 / 16 / 9 / 13 / 13 / 20） |
+| **R2** | 文档收口、最终 CI、转 ready、**合并前终审**。 | **文档与回归修复已完成；截至 `f96edab` 的 macOS CI run `35199118440` 为 82 tests / 0 failures；PR #6 的最终 head CI、ready 与合并状态以远端 PR 记录为准** |
 
 **三个确认点**：① R0 文档 diff → ② R1 的 CoreText 侧 diff（CI 绿后）→ ③ R2 合并前终审。
 
