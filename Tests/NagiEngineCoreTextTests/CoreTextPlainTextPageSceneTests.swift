@@ -54,6 +54,10 @@ private let mixedCorpus = """
 /// semantics.
 private let combiningCorpus = "cafe\u{0301} nai\u{0308}ve re\u{0301}sume\u{0301} e\u{0301}tude"
 
+/// A cap on loops that walk a session, so a session that stops advancing fails
+/// the test instead of hanging it.
+private let stepLimit = 10_000
+
 private func backend(
     _ font: CTFont = latinFont,
     languageTag: String? = nil
@@ -436,6 +440,60 @@ final class CoreTextPlainTextPageSceneTests: XCTestCase {
                 found: DocumentUnitID(rawValue: "other")
             ),
             "another unit's pages"
+        )
+    }
+
+    // MARK: - The ranges-only path retains nothing
+
+    /// `makeSession(for:)` on its own is the **ranges-only** path: it exists to
+    /// feed `TextPaginator` line measurements, and nothing on it builds a page
+    /// scene. A session created that way must therefore retain **no** lines —
+    /// otherwise a long unit keeps every one of its `CTLine`s alive for as long
+    /// as the session lives, purely because somebody paginated it.
+    ///
+    /// "Always" is the assertion, not "at the end": the check runs after every
+    /// suggestion, so a session that starts retaining at any point fails here.
+    ///
+    /// The retention the page scene does need happens on the other path — a
+    /// session driven by the recording backend — and is protected by
+    /// `testBuildingScenesAsksTheSessionForNoFurtherLine`, which reads that
+    /// session's artifacts and requires them to be more than one.
+    func testTheRangesOnlyPathRetainsNoLines() throws {
+        let made = segment(mixedCorpus)
+        let settings = constraints(inlineExtent: 80, blockExtent: 40)
+
+        let session = try backend(cjkFont).makeSession(for: made)
+        XCTAssertTrue(session.artifacts.isEmpty, "a fresh session has retained nothing")
+
+        var offset = 0
+        var suggestions = 0
+
+        while offset < made.utf16Count {
+            guard suggestions < stepLimit else {
+                XCTFail("the session stopped advancing at \(offset)")
+                return
+            }
+            guard let measurement = try session.suggestLine(
+                fromUTF16Offset: offset,
+                inlineExtent: settings.inlineExtent
+            ) else {
+                XCTFail("the session stalled at \(offset)")
+                return
+            }
+
+            offset = measurement.consumedUTF16Range.upperBound
+            suggestions += 1
+
+            XCTAssertTrue(
+                session.artifacts.isEmpty,
+                "a ranges-only session retained a line after suggestion \(suggestions)"
+            )
+        }
+
+        XCTAssertGreaterThanOrEqual(
+            suggestions,
+            2,
+            "the corpus has to need more than one line for this to say anything"
         )
     }
 
