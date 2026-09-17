@@ -72,6 +72,7 @@ CoreText 侧要拿到「同一次调用的页范围」与「这次调用的行�
 - 非空且分页**成功**之后，paginated value 由**该 session 的 exact line artifacts** 构造；
 - **空 segment 时 Core 根本不调用 `makeSession`** ⇒ 记录下来的 session **仍为 `nil`**，于是 `pageCount == 0`；
 - 它是 **module-internal 的实现细节，不是 public API**：不作为公开类型、不被复用、不进 Core。写成 `internal`（而非字面 `private`）是为了让 `@testable` 能证明「`makeSession` 恰好被调用一次 / 空文本零次」。
+- **行保留是 opt-in 的**：公开的 `makeSession(for:)` 默认**不记录任何行** —— 只做 ranges 的那条路径不该因为被分页过，就把整个 unit 的 `CTLine` 一直留在内存里；页面场景要的那些行由 recording 那一侧**显式打开**。两条路径**测量完全相同**，差别只在**留什么**。
 
 **这条机制的价值是让不变量成为结构事实**：「页范围」与「行 artifact」必然出自**同一次调用、同一个 session、同一套 font 与 constraints**。§C 里「不得任意拼接」因此是被构造保证的，而不是靠纪律维持。
 

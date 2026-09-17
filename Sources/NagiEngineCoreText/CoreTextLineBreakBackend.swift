@@ -75,8 +75,34 @@ public struct CoreTextLineBreakBackend: LineBreakBackend {
         self.languageTag = languageTag
     }
 
+    /// A session that measures lines and keeps nothing.
+    ///
+    /// This is the ranges-only path: it exists to feed `TextPaginator`, and a
+    /// long unit must not hold every one of its `CTLine`s merely because it was
+    /// paginated. Retention is opened deliberately, through
+    /// `makeRecordingSession(for:)`.
     public func makeSession(for segment: PrimaryTextSegment) throws -> CoreTextLineBreakSession {
-        CoreTextLineBreakSession(segment: segment, font: font, languageTag: languageTag)
+        CoreTextLineBreakSession(
+            segment: segment,
+            font: font,
+            languageTag: languageTag,
+            recordsLineArtifacts: false
+        )
+    }
+
+    /// The same session, with line retention opened.
+    ///
+    /// Module-internal: the page scene is the one caller that needs the lines,
+    /// and it reaches them through `CoreTextRecordingBackend`. This is not a
+    /// public entry point. What it measures is identical to the session above —
+    /// only what it keeps differs.
+    func makeRecordingSession(for segment: PrimaryTextSegment) throws -> CoreTextLineBreakSession {
+        CoreTextLineBreakSession(
+            segment: segment,
+            font: font,
+            languageTag: languageTag,
+            recordsLineArtifacts: true
+        )
     }
 
     /// Paginates a whole segment and keeps the lines, so that a page can be both
@@ -149,21 +175,33 @@ public struct CoreTextLineBreakBackend: LineBreakBackend {
 /// The initializer is not public: a session is bound to a whole
 /// `PrimaryTextSegment`, and the backend is what pairs them.
 ///
-/// A session also keeps the lines it has measured, in call order, so that the
-/// page scene can be built from the exact `CTLine`s this session produced rather
-/// than from a second round of shaping. That store is module-internal and grows
-/// only inside `suggestLine`.
+/// A session keeps the lines it has measured — in call order, so that the page
+/// scene can be built from the exact `CTLine`s this session produced rather than
+/// from a second round of shaping — **but only when retention was opened**. The
+/// store is module-internal, and it stays empty on the ranges-only path, which
+/// must not hold a whole unit's lines merely because it was paginated.
 public final class CoreTextLineBreakSession: LineBreakSession {
     private let segment: PrimaryTextSegment
     private let typesetter: CTTypesetter
     private let total: Int
+    private let recordsLineArtifacts: Bool
 
     /// The lines this session has produced, in the order it produced them.
+    ///
+    /// **Empty unless retention was opened.** A session handed out by
+    /// `makeSession(for:)` never fills this; one from
+    /// `makeRecordingSession(for:)` fills it exactly as it measures.
     private(set) var artifacts: [CoreTextLineArtifact] = []
 
-    init(segment: PrimaryTextSegment, font: CTFont, languageTag: String?) {
+    init(
+        segment: PrimaryTextSegment,
+        font: CTFont,
+        languageTag: String?,
+        recordsLineArtifacts: Bool
+    ) {
         self.segment = segment
         self.total = segment.utf16Count
+        self.recordsLineArtifacts = recordsLineArtifacts
 
         var attributes: [NSAttributedString.Key: Any] = [
             NSAttributedString.Key(kCTFontAttributeName as String): font,
@@ -232,16 +270,21 @@ public final class CoreTextLineBreakSession: LineBreakSession {
             naturalBlockExtent: Double(ascent + descent + leading)
         )
 
-        artifacts.append(
-            CoreTextLineArtifact(
-                measurement: measurement,
-                line: line,
-                ascent: ascent,
-                descent: descent,
-                leading: leading,
-                typographicWidth: CGFloat(width)
+        // Measuring is the same on both paths; only what is kept differs. The
+        // line kept here is the one measured just above — nothing is shaped a
+        // second time.
+        if recordsLineArtifacts {
+            artifacts.append(
+                CoreTextLineArtifact(
+                    measurement: measurement,
+                    line: line,
+                    ascent: ascent,
+                    descent: descent,
+                    leading: leading,
+                    typographicWidth: CGFloat(width)
+                )
             )
-        )
+        }
 
         return measurement
     }
@@ -255,6 +298,11 @@ public final class CoreTextLineBreakSession: LineBreakSession {
 /// it at the single moment ADR-0004 fixes — after the three constraints are
 /// validated, and only for a non-empty segment. The core keeps no reference to
 /// it, and one instance serves exactly one call.
+///
+/// It is also what **opens line retention**: the session it hands back keeps its
+/// `CTLine`s, while one from the public `makeSession(for:)` keeps none. That is
+/// the whole difference between the two paths, and the reason the ranges-only
+/// one does not grow a unit's worth of lines.
 ///
 /// `makeSessionCallCount` counts successful sessions, so `session != nil` and
 /// `makeSessionCallCount == 1` hold together. The **first** session is the one
@@ -271,7 +319,7 @@ final class CoreTextRecordingBackend: LineBreakBackend {
     }
 
     func makeSession(for segment: PrimaryTextSegment) throws -> CoreTextLineBreakSession {
-        let made = try backend.makeSession(for: segment)
+        let made = try backend.makeRecordingSession(for: segment)
         makeSessionCallCount += 1
         if session == nil {
             session = made
