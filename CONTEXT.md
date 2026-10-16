@@ -7,14 +7,19 @@ Nagi 自研阅读引擎的**生产核心**。本文件是词汇表，只定义�
 ### 位置
 
 **Publication Position**:
-由 Readium `Locator` 承载的、与排版无关的 publication 级坐标。
-跨引擎、跨会话、跨设备同步的身份，也是 Nagi 与 Readium 之间唯一共享的位置语言。
+App 所有的、与排版无关的阅读坐标：带输入作用域的 Native Position，或带来源证据的 Readium Locator；未知来源的旧记录仍是未验证记录。
+两种坐标共享恢复协议，不共享数轴，也不因保存于同一记录模型就具有等价精度。
 _Avoid_: Locator, position, 阅读位置, 页码
 
 **Native Position**:
-Nagi 排版内部的精确坐标 —— 内容单元 + 节点 + canonical primary text 的 UTF-16 偏移。
-服务于文字选择、字形命中、批注精确区间、分页边界。
+Nagi 的内容坐标 —— 内容单元 + 节点 + canonical primary text 的 unit-local UTF-16 偏移。
+它的精确含义依赖外部输入作用域与有效性证据；裸坐标不是跨版本身份。
 _Avoid_: offset, 光标位置, DocumentPosition
+
+**Input Scope**:
+限定一次原生坐标解释的书库记录身份、原始源字节摘要、ingest 规则版本与有序单元清单摘要。
+相同单元名与偏移不代表相同作用域；文件名、路径和排版条件不属于它。
+_Avoid_: 文件路径, 页布局版本, 文件名
 
 **NodeID**:
 Native Position 里的元素身份 —— 一个**不透明**的字符串，按字符串自身的相等语义比较，不套用 href 的归一化规则。
@@ -27,7 +32,8 @@ _Avoid_: 元素下标, DOM path, 解析顺序, 指纹
 _Avoid_: 页码, 全局偏移
 
 **Location Bridge**:
-Publication Position 与 Native Position 之间的双向转换。它是唯一被允许同时认识这两个坐标系的组件。
+Native Position 与 Readium Locator 之间解释两套坐标并尝试转换的组件；转换可能精确、近似或不可用。
+它不同于只按标签保存两种不透明 payload 的恢复记录。
 _Avoid_: 转换器, Adapter, Mapper
 
 **Page Index**:
@@ -126,7 +132,7 @@ _Avoid_: 分页边界
 ### 运行时
 
 **Reader Presentation Engine**:
-阅读呈现的抽象。原生引擎与兼容渲染器是它的两个实现，二者共用同一套位置系统。
+阅读呈现的抽象。原生引擎与兼容渲染器各有坐标语言，共享 App 的恢复协议而不强求坐标互换。
 _Avoid_: Renderer, Navigator
 
 **Native Capability Detector**:
