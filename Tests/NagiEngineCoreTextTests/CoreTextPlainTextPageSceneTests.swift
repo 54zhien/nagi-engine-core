@@ -118,6 +118,56 @@ private func metrics(of scene: CoreTextPlainTextPageScene) -> [CGFloat] {
     }
 }
 
+// MARK: - Lines measured independently of the scene
+
+/// One line as CoreText measures it when asked directly, without going through
+/// the session, the paginator or the scene builder. The geometry tests derive
+/// their expectations from these numbers, so a scene that miscounts its own
+/// lines cannot also supply the answer it is checked against.
+private struct IndependentLine {
+    let line: CTLine
+    let ascent: CGFloat
+    let descent: CGFloat
+    let leading: CGFloat
+    let typographicWidth: CGFloat
+
+    /// The line's natural height, summed here from CoreText's own metrics.
+    var naturalExtent: CGFloat { ascent + descent + leading }
+}
+
+/// Lines over the given ranges of `text`, shaped by a typesetter built in the
+/// test, with only the font set. The ranges are the test's own expectation; the
+/// metrics are whatever `CTLineGetTypographicBounds` reports for them.
+private func independentLines(
+    _ text: String,
+    ranges: [Range<Int>],
+    font: CTFont = latinFont
+) -> [IndependentLine] {
+    let attributed = NSAttributedString(
+        string: text,
+        attributes: [NSAttributedString.Key(kCTFontAttributeName as String): font]
+    )
+    let typesetter = CTTypesetterCreateWithAttributedString(attributed)
+
+    return ranges.map { range in
+        let line = CTTypesetterCreateLine(
+            typesetter,
+            CFRange(location: range.lowerBound, length: range.count)
+        )
+        var ascent: CGFloat = 0
+        var descent: CGFloat = 0
+        var leading: CGFloat = 0
+        let width = CTLineGetTypographicBounds(line, &ascent, &descent, &leading)
+        return IndependentLine(
+            line: line,
+            ascent: ascent,
+            descent: descent,
+            leading: leading,
+            typographicWidth: CGFloat(width)
+        )
+    }
+}
+
 // MARK: - A bitmap in the page's own space
 
 /// A transparent bitmap whose user space is the page's: origin at the page's
@@ -192,15 +242,20 @@ private func deviceBlue() throws -> CGColor {
 ///
 /// `columns` narrows the scan to a band of columns, which is how "nothing was
 /// painted in this region" is checked without reading a pixel golden.
+/// `rows` does the same for buffer rows; which buffer rows a page region lands
+/// in is measured with `markedRegion`, never assumed. Leaving either out scans
+/// the whole bitmap in that direction, as before.
 private func painted(
     in context: CGContext,
     width: Int,
     height: Int,
-    columns: Range<Int>? = nil
+    columns: Range<Int>? = nil,
+    rows: Range<Int>? = nil
 ) throws -> Coverage {
     let raw = try XCTUnwrap(context.data)
     let bytes = raw.bindMemory(to: UInt8.self, capacity: height * context.bytesPerRow)
     let scanned = columns ?? 0..<width
+    let scannedRows = rows ?? 0..<height
 
     var count = 0
     var red = 0
@@ -211,7 +266,7 @@ private func painted(
     var maxX = -1
     var maxY = -1
 
-    for y in 0..<height {
+    for y in scannedRows {
         let row = y * context.bytesPerRow
         for x in scanned {
             // premultipliedLast with byteOrder32Big is R, G, B, A.
@@ -289,6 +344,48 @@ private func topEdgeRows(
     )
     guard coverage.count > 0 else { return 0..<0 }
     return Int(coverage.box.minY)..<(Int(coverage.box.maxY) + 1)
+}
+
+/// The buffer rows and columns a page-space rectangle lands in.
+///
+/// The same construction as the real context, filled with a rectangle whose
+/// page coordinates the test chose, and read back. A rectangle with fractional
+/// edges picks up partially covered pixels at those edges, which is why the
+/// tests shrink a measured region with `interior` before relying on what is
+/// strictly inside it.
+private struct MarkedRegion {
+    let rows: Range<Int>
+    let columns: Range<Int>
+}
+
+private func markedRegion(
+    size: CGSize,
+    inset: Int,
+    rect: CGRect
+) throws -> MarkedRegion {
+    let context = try pageContext(size: size, inset: inset)
+    context.setFillColor(try deviceGreen())
+    context.fill(rect)
+
+    let coverage = try painted(
+        in: context,
+        width: Int(size.width.rounded()) + 2 * inset,
+        height: Int(size.height.rounded()) + 2 * inset
+    )
+    guard coverage.count > 0 else { return MarkedRegion(rows: 0..<0, columns: 0..<0) }
+    // `box.maxY` / `box.maxX` are already one past the last painted pixel.
+    return MarkedRegion(
+        rows: Int(coverage.box.minY)..<Int(coverage.box.maxY),
+        columns: Int(coverage.box.minX)..<Int(coverage.box.maxX)
+    )
+}
+
+/// `range` with `margin` pixels taken off each end, so the edge pixels that
+/// antialiasing may or may not touch are left out. Empty when nothing is left.
+private func interior(_ range: Range<Int>, by margin: Int = 1) -> Range<Int> {
+    let lower = range.lowerBound + margin
+    let upper = range.upperBound - margin
+    return lower < upper ? lower..<upper : lower..<lower
 }
 
 // MARK: - Tests
@@ -1153,5 +1250,387 @@ final class CoreTextPlainTextPageSceneTests: XCTestCase {
             columns: beyondGlyphs
         )
         XCTAssertEqual(beyond.count, 0, "the page must not be filled behind the glyphs")
+    }
+
+    // MARK: - Geometry beyond the first line
+
+    /// The second and third lines sit where their predecessors' natural heights
+    /// and the spacing put them, are painted in their own bands with nothing in
+    /// the gaps, and are hit with their own coordinates.
+    ///
+    /// Every expectation is derived independently: ranges from the text's own
+    /// UTF-16 lengths, positions from CoreText metrics measured in this test,
+    /// buffer rows from marks, and hit offsets from CoreText asked about the
+    /// independently placed point. Nothing is taken from the scene to check the
+    /// scene.
+    func testLaterLinesPaintAndHitInTheirOwnBands() throws {
+        let pieces = ["HHHH", "HHHH", "HHHH"]
+        let text = pieces.joined(separator: "\n")
+        let made = segment(text)
+        let spacing = 12.0
+        let settings = constraints(inlineExtent: 200, blockExtent: 200, lineSpacing: spacing)
+        let paginated = try backend().makePaginatedPlainText(
+            segment: made,
+            nodeID: node,
+            constraints: settings
+        )
+
+        // The premise: one page holding exactly three lines.
+        XCTAssertEqual(paginated.pageCount, 1, "the three lines have to share one page")
+        let scene = try XCTUnwrap(paginated.scene(at: 0))
+        XCTAssertEqual(scene.lineCount, 3, "the text has to break into exactly three lines")
+        guard paginated.pageCount == 1, scene.lineCount == 3 else { return }
+
+        // Each line takes its piece and, except the last, the LF after it.
+        var expectedRanges: [Range<Int>] = []
+        var start = 0
+        for (index, piece) in pieces.enumerated() {
+            let length = piece.utf16.count + (index < pieces.count - 1 ? 1 : 0)
+            expectedRanges.append(start..<(start + length))
+            start += length
+        }
+        XCTAssertEqual(start, text.utf16.count)
+        XCTAssertEqual(
+            scene.lines.map { $0.artifact.measurement.consumedUTF16Range },
+            expectedRanges
+        )
+
+        // Positions from metrics measured here: each top is the previous top
+        // plus its natural height plus the spacing; each baseline is its top
+        // plus its own ascent.
+        let independent = independentLines(text, ranges: expectedRanges)
+        XCTAssertEqual(independent.count, 3)
+
+        var expectedTops: [CGFloat] = []
+        var nextTop: CGFloat = 0
+        for (index, line) in independent.enumerated() {
+            if index > 0 { nextTop += CGFloat(spacing) }
+            expectedTops.append(nextTop)
+            nextTop += line.naturalExtent
+        }
+        let expectedBaselines = zip(expectedTops, independent).map { $0 + $1.ascent }
+        XCTAssertLessThanOrEqual(nextTop, scene.size.height, "all three bands fit on the page")
+
+        for index in 0..<3 {
+            XCTAssertEqual(
+                scene.lines[index].top,
+                expectedTops[index],
+                accuracy: 1e-9,
+                "line \(index) starts below its predecessors and the spacing"
+            )
+            XCTAssertEqual(
+                scene.lines[index].baseline,
+                expectedBaselines[index],
+                accuracy: 1e-9,
+                "line \(index)'s baseline is its own top plus its own ascent"
+            )
+        }
+
+        // Drawing, into the existing page-local context.
+        let inset = 8
+        let bitmapWidth = Int(scene.size.width.rounded()) + 2 * inset
+        let bitmapHeight = Int(scene.size.height.rounded()) + 2 * inset
+        let context = try pageContext(size: scene.size, inset: inset)
+        scene.draw(in: context, foregroundColor: try deviceRed())
+
+        let pageColumns = try markedRegion(
+            size: scene.size,
+            inset: inset,
+            rect: CGRect(origin: .zero, size: scene.size)
+        ).columns
+        XCTAssertFalse(pageColumns.isEmpty, "the page mark has to land somewhere")
+
+        // Each line's glyph band, from its independent baseline and CoreText's
+        // glyph path bounds, has ink.
+        for index in 0..<3 {
+            let glyphBounds = CTLineGetBoundsWithOptions(
+                independent[index].line,
+                .useGlyphPathBounds
+            )
+            XCTAssertFalse(glyphBounds.isEmpty, "line \(index) has glyphs to paint")
+
+            let inkTop = expectedBaselines[index] - glyphBounds.maxY
+            let inkBottom = expectedBaselines[index] - glyphBounds.minY
+            XCTAssertGreaterThanOrEqual(inkTop, expectedTops[index], "line \(index)'s ink is inside its band")
+            XCTAssertLessThanOrEqual(
+                inkBottom,
+                expectedTops[index] + independent[index].naturalExtent,
+                "line \(index)'s ink is inside its band"
+            )
+
+            let inkRows = interior(
+                try markedRegion(
+                    size: scene.size,
+                    inset: inset,
+                    rect: CGRect(x: 0, y: inkTop, width: scene.size.width, height: inkBottom - inkTop)
+                ).rows
+            )
+            XCTAssertFalse(inkRows.isEmpty, "line \(index)'s glyph band has measurable rows")
+
+            let ink = try painted(
+                in: context,
+                width: bitmapWidth,
+                height: bitmapHeight,
+                columns: pageColumns,
+                rows: inkRows
+            )
+            XCTAssertGreaterThan(ink.count, 0, "line \(index) is painted in its own band")
+            XCTAssertGreaterThan(ink.redDominant, 0, "in the foreground colour")
+        }
+
+        // The inside of each spacing gap stays blank.
+        for index in 1..<3 {
+            let gapStart = expectedTops[index - 1] + independent[index - 1].naturalExtent
+            let gapEnd = expectedTops[index]
+            XCTAssertEqual(gapEnd - gapStart, CGFloat(spacing), accuracy: 1e-9)
+
+            let gapRows = interior(
+                try markedRegion(
+                    size: scene.size,
+                    inset: inset,
+                    rect: CGRect(x: 0, y: gapStart, width: scene.size.width, height: gapEnd - gapStart)
+                ).rows
+            )
+            XCTAssertFalse(gapRows.isEmpty, "the gap before line \(index) has measurable rows")
+
+            let gap = try painted(
+                in: context,
+                width: bitmapWidth,
+                height: bitmapHeight,
+                columns: pageColumns,
+                rows: gapRows
+            )
+            XCTAssertEqual(gap.count, 0, "nothing is painted inside the gap before line \(index)")
+        }
+
+        // Hits on the later lines: the point comes from the independent top and
+        // ascent, the offset from CoreText asked about that same point relative
+        // to the independent baseline.
+        for index in 1..<3 {
+            let line = independent[index]
+            let point = CGPoint(
+                x: line.typographicWidth / 2,
+                y: expectedTops[index] + line.ascent / 2
+            )
+            let relative = CGPoint(x: point.x, y: expectedBaselines[index] - point.y)
+            let oracle = CTLineGetStringIndexForPosition(line.line, relative)
+
+            XCTAssertTrue(
+                CoreTextHitRules.acceptsIndex(oracle, consumed: expectedRanges[index]),
+                "CoreText's answer for line \(index) falls inside that line's range"
+            )
+            XCTAssertGreaterThan(
+                oracle,
+                expectedRanges[index].lowerBound,
+                "and past the offset line \(index) shares with the line before it"
+            )
+            XCTAssertTrue(made.isStorageBoundary(at: oracle), "and on a legal storage boundary")
+
+            let hit = scene.nativePosition(at: point)
+            XCTAssertEqual(hit?.utf16Offset, oracle, "line \(index) is hit with its own coordinates")
+            XCTAssertEqual(hit?.unitID, made.unitID)
+            XCTAssertEqual(hit?.nodeID, node)
+        }
+    }
+
+    /// A line taller than its page stays where it would be on a tall page and
+    /// is cut off at the page's bottom edge, not scaled or moved.
+    ///
+    /// Both scenes are drawn into a canvas taller than the clipped page, so the
+    /// area below that page can actually be observed: the reference proves there
+    /// is ink there to lose, and the clipped scene must leave none of it. Buffer
+    /// regions come from marks; no assumption is made about which way the buffer
+    /// rows run.
+    func testAnOverheightLineIsClippedToItsPage() throws {
+        let text = "HHHH"
+        let made = segment(text)
+        let inlineExtent = 200.0
+        let tallExtent = 200.0
+        let wholeRange = 0..<made.utf16Count
+
+        // The reference: the same line with room to spare.
+        let reference = try backend().makePaginatedPlainText(
+            segment: made,
+            nodeID: node,
+            constraints: constraints(inlineExtent: inlineExtent, blockExtent: tallExtent)
+        )
+        XCTAssertEqual(reference.pageCount, 1)
+        let referenceScene = try XCTUnwrap(reference.scene(at: 0))
+        XCTAssertEqual(referenceScene.lineCount, 1)
+        XCTAssertEqual(referenceScene.utf16Range, wholeRange)
+        guard reference.pageCount == 1, referenceScene.lineCount == 1 else { return }
+
+        // A page height that cuts through the glyphs, from CoreText's own
+        // ascent and glyph path bounds.
+        let independent = try XCTUnwrap(independentLines(text, ranges: [wholeRange]).first)
+        let natural = independent.naturalExtent
+        XCTAssertLessThan(natural, CGFloat(tallExtent), "the reference page really is tall enough")
+
+        let glyphBounds = CTLineGetBoundsWithOptions(independent.line, .useGlyphPathBounds)
+        XCTAssertFalse(glyphBounds.isEmpty, "the line has glyphs to cut")
+        let inkTop = independent.ascent - glyphBounds.maxY
+        let inkBottom = independent.ascent - glyphBounds.minY
+        let clipExtent = ((inkTop + inkBottom) / 2).rounded(.down)
+
+        XCTAssertGreaterThan(clipExtent, 0)
+        XCTAssertLessThan(clipExtent, natural, "the page is shorter than the line")
+        XCTAssertGreaterThanOrEqual(clipExtent - inkTop, 3, "there is ink to keep above the cut")
+        XCTAssertGreaterThanOrEqual(inkBottom - clipExtent, 3, "and ink to lose below it")
+
+        // The clipped scene: one page, one line, placed exactly as on the tall
+        // page.
+        let clipped = try backend().makePaginatedPlainText(
+            segment: made,
+            nodeID: node,
+            constraints: constraints(inlineExtent: inlineExtent, blockExtent: Double(clipExtent))
+        )
+        XCTAssertEqual(clipped.pageCount, 1)
+        let clippedScene = try XCTUnwrap(clipped.scene(at: 0))
+        XCTAssertEqual(clippedScene.lineCount, 1)
+        guard clipped.pageCount == 1, clippedScene.lineCount == 1 else { return }
+
+        XCTAssertEqual(clippedScene.utf16Range, wholeRange)
+        XCTAssertEqual(clippedScene.size.height, clipExtent, "the page is exactly the constraint")
+        XCTAssertEqual(Double(clippedScene.size.width), inlineExtent)
+
+        let clippedLine = clippedScene.lines[0]
+        XCTAssertEqual(clippedLine.top, 0, "the line still starts at the top")
+        XCTAssertEqual(
+            clippedLine.baseline,
+            independent.ascent,
+            accuracy: 1e-9,
+            "the baseline is not scaled or moved to fit"
+        )
+        XCTAssertEqual(
+            CGFloat(clippedLine.artifact.measurement.naturalBlockExtent),
+            natural,
+            accuracy: 1e-9,
+            "the line keeps its natural height"
+        )
+
+        // One canvas size for both, as tall as the reference page, with the
+        // page's top-left in the same place.
+        let canvas = referenceScene.size
+        let inset = 8
+        let bitmapWidth = Int(canvas.width.rounded()) + 2 * inset
+        let bitmapHeight = Int(canvas.height.rounded()) + 2 * inset
+        let red = try deviceRed()
+
+        func render(_ scene: CoreTextPlainTextPageScene) throws -> CGContext {
+            let context = try pageContext(size: canvas, inset: inset)
+            scene.draw(in: context, foregroundColor: red)
+            return context
+        }
+        let referenceContext = try render(referenceScene)
+        let clippedContext = try render(clippedScene)
+
+        func ink(
+            _ context: CGContext,
+            columns: Range<Int>? = nil,
+            rows: Range<Int>? = nil
+        ) throws -> Coverage {
+            try painted(
+                in: context,
+                width: bitmapWidth,
+                height: bitmapHeight,
+                columns: columns,
+                rows: rows
+            )
+        }
+
+        // The clipped page's buffer region, and the band below its bottom edge
+        // down to the end of the canvas, both measured.
+        let page = try markedRegion(
+            size: canvas,
+            inset: inset,
+            rect: CGRect(origin: .zero, size: clippedScene.size)
+        )
+        XCTAssertFalse(page.rows.isEmpty, "the page mark has to land somewhere")
+        XCTAssertFalse(page.columns.isEmpty, "the page mark has to land somewhere")
+
+        let below = interior(
+            try markedRegion(
+                size: canvas,
+                inset: inset,
+                rect: CGRect(
+                    x: 0,
+                    y: clipExtent,
+                    width: clippedScene.size.width,
+                    height: canvas.height - clipExtent
+                )
+            ).rows
+        )
+        XCTAssertFalse(below.isEmpty, "the band below the page has measurable rows")
+        XCTAssertTrue(
+            below.upperBound <= page.rows.lowerBound || below.lowerBound >= page.rows.upperBound,
+            "the band below the page shares no buffer row with the page, whichever way the rows run"
+        )
+
+        // Positive control: the reference has ink below the clipped page's edge.
+        XCTAssertGreaterThan(
+            try ink(referenceContext, columns: page.columns, rows: below).count,
+            0,
+            "the reference line has ink below the clipped page's bottom edge"
+        )
+
+        // The clipped scene keeps its ink on the page and loses what is below.
+        XCTAssertEqual(
+            try ink(clippedContext, columns: page.columns, rows: below).count,
+            0,
+            "nothing of the clipped line is painted below its page"
+        )
+        let clippedInPage = try ink(clippedContext, columns: page.columns, rows: interior(page.rows))
+        XCTAssertGreaterThan(clippedInPage.count, 0, "the clipped line is still painted on its page")
+
+        // On the page, the two passes paint the same pixels: same colour, same
+        // line, same place — so the clipped line was neither scaled nor moved.
+        let referenceInPage = try ink(referenceContext, columns: page.columns, rows: page.rows)
+        let clippedWholePage = try ink(clippedContext, columns: page.columns, rows: page.rows)
+        XCTAssertEqual(
+            clippedWholePage.box,
+            referenceInPage.box,
+            "inside the page the clipped line sits exactly where the reference does"
+        )
+
+        // Everything outside the page's buffer region, before and after it in
+        // both directions, is blank for the clipped scene.
+        let rowsBefore = 0..<page.rows.lowerBound
+        let rowsAfter = page.rows.upperBound..<bitmapHeight
+        let columnsBefore = 0..<page.columns.lowerBound
+        let columnsAfter = page.columns.upperBound..<bitmapWidth
+        XCTAssertFalse(rowsBefore.isEmpty, "there are buffer rows before the page's rows")
+        XCTAssertFalse(rowsAfter.isEmpty, "there are buffer rows after the page's rows")
+        XCTAssertFalse(columnsBefore.isEmpty, "there are buffer columns before the page's columns")
+        XCTAssertFalse(columnsAfter.isEmpty, "there are buffer columns after the page's columns")
+
+        // The region outside the page can be observed: the reference reaches it.
+        let referenceOutside = try ink(referenceContext, rows: rowsBefore).count
+            + (try ink(referenceContext, rows: rowsAfter).count)
+        XCTAssertGreaterThan(
+            referenceOutside,
+            0,
+            "the reference line has ink in the buffer rows outside the clipped page"
+        )
+
+        XCTAssertEqual(
+            try ink(clippedContext, rows: rowsBefore).count,
+            0,
+            "no clipped ink in the buffer rows before the page's rows"
+        )
+        XCTAssertEqual(
+            try ink(clippedContext, rows: rowsAfter).count,
+            0,
+            "no clipped ink in the buffer rows after the page's rows"
+        )
+        XCTAssertEqual(
+            try ink(clippedContext, columns: columnsBefore).count,
+            0,
+            "no clipped ink in the buffer columns before the page's columns"
+        )
+        XCTAssertEqual(
+            try ink(clippedContext, columns: columnsAfter).count,
+            0,
+            "no clipped ink in the buffer columns after the page's columns"
+        )
     }
 }
