@@ -288,7 +288,7 @@ public struct CoreTextPlainTextPageScene {
 - **主工程在本纵切里完全不受影响**：它今天仍走「TXT → 派生 EPUB → Readium」，且**尚未依赖** Core（§证据基线）。E4 只在 Core 仓内建立真实消费者；**实机接入是下一阶段 E5**。
 - **两条留给 E5 的输入约束**（E4 不解决，先记下以免将来重找）：
   - 主工程的 `CLAUDE.md` 明文「**不要动用户的 UI** … 不在设置、选项、菜单里加任何东西 —— **包括调试项、状态行、开关**」，且其教训写着「**让用户选渲染引擎这个设计本身就是错的**」；仓内特性开关机制命中 **0**。**因此 E5 的 gate 必须是内部构建 / 能力门，不得是用户设置。**
-  - 主工程的 `ReadingPosition` **只有 `locatorJSON: String` 一个字段**，进度持久化整体走 Locator JSON。非 Readium 的排版将来若要共用进度，必须自己产出等价的 locator JSON。
+  - 上述主工程基线的 `ReadingPosition` **只有 `locatorJSON: String` 一个字段**，进度持久化整体走 Locator JSON。这是既有宿主现状，不是非 Readium 排版必须伪造等价 Locator 的要求。后续恢复契约采用带标签、带作用域的两种坐标，见 [ADR-0006](0006-scoped-reading-position.md)；本 ADR 的 scene/backend API 与几何契约不因此改变。
 - 旧仓 `0006:56` 的口径在本 ADR 继续适用：本切片用的是 CoreText **默认候选断行**，**不构成**对完整 UAX #14 或日本語組版规则的兼容性保证。
 
 ## 实现与实测（2026-09-15）
